@@ -1,0 +1,21 @@
+{
+  "url": "https://www.daraz.pk",
+  "timestamp": "2026-02-19T18:05:13.428044+00:00",
+  "timings_seconds": {
+    "imports": 0.6842733000012231,
+    "browser_launch": 0.4943999999995867,
+    "capture": 28.399591199999122,
+    "save_raw": 0.05043880000084755,
+    "planning": 0.2799252000004344,
+    "dataset_init": 0.002150100001017563,
+    "verifier": 0.1763747000004514,
+    "TOTAL": 30.164864499998657
+  },
+  "capture_stats": {
+    "screenshot_chars": 5334316,
+    "dom_chars": 522828,
+    "elements": 1858,
+    "interactions": 8
+  },
+  "issues": []
+}

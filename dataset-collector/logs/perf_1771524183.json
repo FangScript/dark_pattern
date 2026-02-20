@@ -1,0 +1,21 @@
+{
+  "url": "https://www.daraz.pk",
+  "timestamp": "2026-02-19T18:03:03.703774+00:00",
+  "timings_seconds": {
+    "imports": 1.6870396999984223,
+    "browser_launch": 0.8773240000009537,
+    "verifier": 7.929999992484227e-05,
+    "TOTAL": 32.73831810000047
+  },
+  "capture_stats": {},
+  "issues": [
+    {
+      "stage": "Capture",
+      "error": "Page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to \"https://www.daraz.pk/\", waiting until \"networkidle\"\n"
+    },
+    {
+      "stage": "Dataset",
+      "error": "'DatasetManager' object has no attribute '_id_counter'"
+    }
+  ]
+}

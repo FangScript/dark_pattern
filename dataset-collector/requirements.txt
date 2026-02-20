@@ -1,0 +1,31 @@
+# Dark Pattern Dataset Collector — Python Dependencies
+# Install with: pip install -r requirements.txt
+# Then install Playwright browsers: playwright install chromium
+
+# Browser automation
+playwright>=1.44.0
+
+# OpenAI-compatible API client (works with OpenAI, Qwen-VL, Gemini, Anthropic)
+openai>=1.30.0
+
+# Image processing (screenshot cropping, resizing)
+Pillow>=10.0.0
+
+# Numerical operations (IoU calculation, bbox math)
+numpy>=1.24.0
+
+# Async HTTP (for parallel requests)
+aiohttp>=3.9.0
+
+# Async file I/O
+aiofiles>=23.0.0
+
+# Progress bars for batch processing
+tqdm>=4.66.0
+
+# .env file support
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

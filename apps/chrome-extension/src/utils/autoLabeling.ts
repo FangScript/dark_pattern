@@ -1,0 +1,627 @@
+/**
+ * Auto-Labeling Engine for Weak Supervision
+ * 
+ * Uses Vision-Language Models (VLM) to automatically detect dark patterns
+ * and generate structured labels with bounding boxes and confidence scores.
+ */
+
+import { AIActionType, callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
+import { getDebug } from '@darkpatternhunter/shared/logger';
+import type { ChatCompletionMessageParam } from 'openai/resources/index';
+import type { AutoLabel } from './datasetDB';
+import { getActiveModelConfig } from './aiConfig';
+
+const debug = getDebug('auto-labeling');
+
+// 18-category taxonomy (canonical labels)
+const DARK_PATTERN_TAXONOMY = [
+  'Nagging',
+  'Scarcity & Popularity',
+  'FOMO / Urgency',
+  'Reference Pricing',
+  'Disguised Ads',
+  'False Hierarchy',
+  'Interface Interference',
+  'Misdirection',
+  'Hard To Close',
+  'Obstruction',
+  'Bundling',
+  'Sneaking',
+  'Hidden Information',
+  'Subscription Trap',
+  'Roach Motel',
+  'Confirmshaming',
+  'Forced Registration',
+  'Gamification Pressure',
+] as const;
+
+// VLM Prompt Template for Auto-Labeling (research-grade, strict + evidence-based)
+const AUTO_LABELING_PROMPT = `You are a research-grade dark pattern detection and localization model specialized in e-commerce interfaces.
+
+You perform evidence-based visual + structural analysis.
+
+You must prioritize:
+
+- Precise bounding boxes
+- Conservative labeling
+- Well-calibrated confidence
+- Dataset-quality consistency
+
+You are generating labels for a research dataset.
+Incorrect labels reduce dataset quality.
+Be strict and evidence-driven.
+
+INPUTS
+
+You will receive:
+
+- A full-page screenshot of an e-commerce webpage
+- The webpage DOM HTML (may be long or partial)
+
+Use BOTH modalities:
+
+- Screenshot → visual evidence, UI prominence, styling
+- DOM → structure, hidden defaults, prechecked inputs, scripts, hidden elements
+
+If screenshot and DOM conflict → prioritize visible screenshot evidence.
+
+TASK
+
+Detect and LOCALIZE any dark patterns present using the taxonomy below.
+
+You must:
+
+- Identify concrete visual/structural evidence.
+- Localize it precisely.
+- Assign calibrated confidence.
+- Avoid speculative labeling.
+
+TAXONOMY (USE EXACT LABELS)
+
+${DARK_PATTERN_TAXONOMY.join('\n')}
+
+Do NOT invent new labels. Use EXACT spelling.
+
+DETECTION RULES (STRICT)
+
+Only label a pattern if:
+
+- Clear visual or DOM evidence exists
+- It matches the taxonomy definition
+- It is localized in the screenshot
+- It would reasonably influence user decision-making
+
+Do NOT label:
+
+- Normal UX patterns
+- Standard discounts without anchoring
+- Legitimate stock counters without pressure framing
+- Clean UI hierarchy without manipulation
+- Subscription offers without friction evidence
+
+BOUNDING BOX RULES (CRITICAL)
+
+Each pattern MUST include:
+
+"bbox": [x, y, width, height]
+
+Rules:
+
+- Coordinates in PIXELS
+- Relative to the provided screenshot
+- Tightly enclose the visual evidence
+- Do NOT include unrelated whitespace
+- Do NOT estimate outside visible area
+- Do NOT guess coordinates
+
+If multiple separate UI elements independently qualify → return separate pattern objects.
+If you cannot confidently localize → do NOT output that pattern.
+
+CONFIDENCE CALIBRATION (STRICT)
+
+Base confidence on:
+
+- Strength of evidence
+- Clarity of visual signals
+- Alignment with taxonomy definition
+- Manipulative intent clarity
+
+Scale:
+
+0.90–1.00: Unmistakable manipulation (rare)
+0.75–0.89: Strong evidence with minor ambiguity
+0.50–0.74: Plausible but some uncertainty
+<0.50: Do NOT output
+
+Be conservative. High confidence should be rare.
+
+FALSE POSITIVE GUARDRAILS
+
+Before finalizing output:
+
+- Remove duplicate overlapping labels
+- Do not label the same UI block under multiple categories unless clearly distinct mechanisms
+- If unsure between two categories → choose the most specific one
+- Avoid over-labeling
+
+Dataset precision > recall.
+
+EDGE CASE RULES
+
+- Countdown timer exists but no urgency language → still FOMO / Urgency if visually time-bound
+- Prechecked checkbox found in DOM → label Bundling (only if visible in screenshot)
+- Large CTA dominates + small gray decline → False Hierarchy
+- Crossed-out price without credible reference → Reference Pricing
+- Modal appears immediately blocking page → Nagging or Hard To Close (depending on dismiss friction)
+
+OUTPUT FORMAT (JSON ONLY — NO TEXT)
+
+Return EXACTLY this schema:
+
+{
+  "patterns": [
+    {
+      "category": "Exact Taxonomy Label",
+      "bbox": [x, y, width, height],
+      "confidence": 0.00,
+      "evidence": "Brief description of visible evidence supporting the classification"
+    }
+  ]
+}
+
+Rules:
+
+- Valid JSON only
+- No explanations outside JSON
+- No markdown
+- No comments
+- No trailing commas
+
+If no patterns detected, return:
+
+{
+  "patterns": []
+}`;
+
+// AI Response Schema
+interface AutoLabelingResponse {
+  patterns: Array<{
+    category: string;
+    bbox: [number, number, number, number];
+    confidence: number;
+    description?: string;
+    severity?: 'low' | 'medium' | 'high' | 'critical';
+    location?: string;
+    evidence?: string;
+  }>;
+}
+
+/**
+ * Validate auto-label response
+ */
+function validateAutoLabel(label: AutoLabelingResponse['patterns'][0], modelName: string): AutoLabel | null {
+  // Validate category
+  const validCategory = DARK_PATTERN_TAXONOMY.find(
+    (cat) => cat.toLowerCase() === label.category.toLowerCase()
+  );
+  
+  if (!validCategory) {
+    debug(`Invalid category: ${label.category}`);
+    return null;
+  }
+
+  // Validate bbox
+  if (!label.bbox || !Array.isArray(label.bbox) || label.bbox.length !== 4) {
+    debug(`Invalid bbox: ${JSON.stringify(label.bbox)}`);
+    return null;
+  }
+
+  const [x, y, width, height] = label.bbox;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    x < 0 ||
+    y < 0 ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    debug(`Invalid bbox values: [${x}, ${y}, ${width}, ${height}]`);
+    return null;
+  }
+
+  // Validate confidence
+  const confidence = Math.max(0, Math.min(1, label.confidence || 0));
+  if (confidence < 0.5) {
+    debug(`Low confidence filtered: ${confidence}`);
+    return null;
+  }
+
+  return {
+    category: validCategory,
+    bbox: [x, y, width, height],
+    confidence,
+    model: modelName,
+    description: label.description,
+    severity: label.severity || 'medium',
+    location: label.location,
+    evidence: label.evidence,
+  };
+}
+
+/**
+ * Detect if an error is a vision/image-not-supported error from a local model
+ */
+export function isImageSupportError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes('failed to process image') ||
+    msg.includes('does not support image') ||
+    msg.includes('image_url') ||
+    msg.includes('multimodal') ||
+    msg.includes('vision')
+  );
+}
+
+/**
+ * DOM-only analysis — for models that don't support vision/images (e.g. local LLMs).
+ * Analyzes page DOM structure for dark patterns without requiring screenshot.
+ * Patterns are returned without bboxes (bbox = [0,0,0,0]).
+ */
+export async function autoLabelDOMOnly(
+  dom: string,
+  url?: string,
+): Promise<AutoLabel[]> {
+  const modelConfig = await getActiveModelConfig();
+  const usedModelName = modelConfig?.modelName || 'unknown';
+
+  debug(`DOM-only labeling with model: ${usedModelName}`);
+
+  try {
+    if (!modelConfig || !modelConfig.modelName) throw new Error('AI model not configured');
+
+    const messages: ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: `You are a research-grade dark pattern detection model specialized in e-commerce.
+You analyze HTML DOM structure to detect manipulative dark patterns.
+You do NOT have access to screenshots — analyze structure and text only.
+Return ONLY valid JSON, no markdown, no explanation.`,
+      },
+      {
+        role: 'user',
+        content: `Analyze this webpage's DOM for dark patterns.
+${url ? `URL: ${url}` : ''}
+
+DOM HTML (excerpt):
+${dom.substring(0, 6000)}
+
+Use ONLY these category labels:
+${DARK_PATTERN_TAXONOMY.join(', ')}
+
+Look for:
+- Countdown timers (urgency/FOMO) in DOM structure
+- Crossed-out prices or fake "was/now" pricing (Reference Pricing)
+- Pre-checked checkboxes for add-ons (Bundling/Sneaking)
+- Small/hidden unsubscribe paths (Roach Motel/Subscription Trap)
+- Forced account/registration gates (Forced Registration)
+- Nagging popups or repeated prompts (Nagging)
+- Urgency/scarcity text in class names or data attributes
+- Hidden fees or condition text in small/secondary elements (Hidden Information)
+- Confirmshaming language in decline buttons
+- Urdu / Roman Urdu text that indicates any of the above
+
+Return JSON:
+{
+  "patterns": [
+    {
+      "category": "exact label from taxonomy",
+      "confidence": 0.0 to 1.0,
+      "evidence": "exact text or element from DOM proving the pattern",
+      "severity": "low" | "medium" | "high" | "critical",
+      "location": "where on page (header/product card/modal/footer/etc)"
+    }
+  ]
+}
+
+Rules:
+- Only patterns with confidence > 0.65
+- Only CLEAR DOM evidence, not speculation
+- No bboxes required (DOM-only mode)
+- If no patterns found return: { "patterns": [] }`,
+      },
+    ];
+
+    const response = await callAIWithObjectResponse<AutoLabelingResponse>(
+      messages,
+      AIActionType.EXTRACT_DATA,
+      modelConfig,
+    );
+
+    const validatedLabels: AutoLabel[] = [];
+    if (response.content.patterns && Array.isArray(response.content.patterns)) {
+      for (const pattern of response.content.patterns) {
+        const validCategory = DARK_PATTERN_TAXONOMY.find(
+          (cat) => cat.toLowerCase() === pattern.category?.toLowerCase(),
+        );
+        if (!validCategory) continue;
+
+        const confidence = Math.max(0, Math.min(1, pattern.confidence || 0));
+        if (confidence < 0.5) continue;
+
+        validatedLabels.push({
+          category: validCategory,
+          bbox: pattern.bbox ?? [0, 0, 0, 0],
+          confidence,
+          model: usedModelName,
+          description: pattern.evidence || pattern.description,
+          severity: pattern.severity || 'medium',
+          location: pattern.location,
+          evidence: pattern.evidence,
+        });
+      }
+    }
+
+    debug(`DOM-only labeling complete: ${validatedLabels.length} labels`);
+    return validatedLabels;
+  } catch (error) {
+    debug('DOM-only labeling failed:', error);
+    throw new Error(
+      `DOM-only labeling failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Auto-label a screenshot using VLM
+ *
+ * @param screenshot - Base64 data URL of screenshot
+ * @param dom - DOM HTML string
+ * @param modelName - Optional model identifier (defaults to current config)
+ * @returns Array of validated AutoLabel objects
+ */
+export async function autoLabelScreenshot(
+  screenshot: string,
+  dom?: string,
+  modelName?: string,
+): Promise<AutoLabel[]> {
+  const modelConfig = await getActiveModelConfig();
+  const usedModelName = modelName || modelConfig.modelName || 'unknown';
+
+  debug(`Auto-labeling with model: ${usedModelName}`);
+
+  try {
+    if (!modelConfig || !modelConfig.modelName) {
+      throw new Error('AI model not configured');
+    }
+    if (!modelConfig.openaiApiKey) {
+      // In local mode this may be a dummy key, but it should still be present.
+      throw new Error('Missing API key for active model configuration');
+    }
+
+    // Prepare messages for VLM
+    const messages: ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: AUTO_LABELING_PROMPT,
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Analyze this webpage for dark patterns.
+
+${dom ? `DOM Structure (excerpt):\n${dom.substring(0, 2000)}...` : 'DOM not available.'}
+
+Detect all dark patterns and provide bounding boxes with confidence scores.`,
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: screenshot,
+            },
+          },
+        ],
+      },
+    ];
+
+    // Call AI with retry logic
+    const response = await callAIWithObjectResponse<AutoLabelingResponse>(
+      messages,
+      AIActionType.EXTRACT_DATA,
+      modelConfig,
+    );
+
+    // Validate and filter labels
+    const validatedLabels: AutoLabel[] = [];
+    
+    if (response.content.patterns && Array.isArray(response.content.patterns)) {
+      for (const pattern of response.content.patterns) {
+        const validated = validateAutoLabel(pattern, usedModelName);
+        if (validated) {
+          validatedLabels.push(validated);
+        }
+      }
+    }
+
+    debug(`Auto-labeling complete: ${validatedLabels.length} valid labels`);
+    return validatedLabels;
+  } catch (error) {
+    debug('Auto-labeling failed:', error);
+    throw new Error(
+      `Auto-labeling failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Multi-model voting: Aggregate labels from multiple models
+ * 
+ * @param labelSets - Array of label arrays from different models
+ * @param iouThreshold - IoU threshold for matching boxes (default 0.5)
+ * @returns Aggregated labels with averaged confidence
+ */
+export function aggregateMultiModelLabels(
+  labelSets: AutoLabel[][],
+  iouThreshold = 0.5,
+): AutoLabel[] {
+  if (labelSets.length === 0) return [];
+  if (labelSets.length === 1) return labelSets[0];
+
+  debug(`Aggregating labels from ${labelSets.length} models`);
+
+  // Flatten all labels with model tracking
+  const allLabels: Array<AutoLabel & { modelIndex: number }> = [];
+  labelSets.forEach((labels, modelIdx) => {
+    labels.forEach((label) => {
+      allLabels.push({ ...label, modelIndex: modelIdx });
+    });
+  });
+
+  // Group by category
+  const byCategory = new Map<string, typeof allLabels>();
+  allLabels.forEach((label) => {
+    const key = label.category;
+    if (!byCategory.has(key)) {
+      byCategory.set(key, []);
+    }
+    byCategory.get(key)!.push(label);
+  });
+
+  const aggregated: AutoLabel[] = [];
+
+  // For each category, find overlapping boxes and aggregate
+  byCategory.forEach((labels, category) => {
+    // Sort by confidence (descending)
+    labels.sort((a, b) => b.confidence - a.confidence);
+
+    const clusters: Array<typeof allLabels> = [];
+
+    labels.forEach((label) => {
+      let assigned = false;
+      for (const cluster of clusters) {
+        // Check if this label overlaps with any label in cluster
+        const overlaps = cluster.some((clusterLabel) => {
+          const iou = calculateIoU(label.bbox, clusterLabel.bbox);
+          return iou >= iouThreshold;
+        });
+
+        if (overlaps) {
+          cluster.push(label);
+          assigned = true;
+          break;
+        }
+      }
+
+      if (!assigned) {
+        clusters.push([label]);
+      }
+    });
+
+    // Aggregate each cluster
+    clusters.forEach((cluster) => {
+      if (cluster.length === 1) {
+        // Single model, use as-is
+        const { modelIndex, ...label } = cluster[0];
+        aggregated.push(label);
+      } else {
+        // Multiple models agree, average bbox and confidence
+        const avgBbox = averageBbox(cluster.map((l) => l.bbox));
+        const avgConfidence =
+          cluster.reduce((sum, l) => sum + l.confidence, 0) / cluster.length;
+        const models = [...new Set(cluster.map((l) => l.model))].join(',');
+
+        aggregated.push({
+          category: cluster[0].category,
+          bbox: avgBbox,
+          confidence: Math.min(1, avgConfidence * 1.1), // Slight boost for agreement
+          model: `voting:${models}`,
+          description: cluster[0].description,
+          severity: cluster[0].severity,
+          location: cluster[0].location,
+          evidence: cluster[0].evidence,
+        });
+      }
+    });
+  });
+
+  debug(`Aggregated to ${aggregated.length} labels`);
+  return aggregated;
+}
+
+/**
+ * Calculate Intersection over Union (IoU) for two bounding boxes
+ */
+function calculateIoU(
+  bbox1: [number, number, number, number],
+  bbox2: [number, number, number, number],
+): number {
+  const [x1, y1, w1, h1] = bbox1;
+  const [x2, y2, w2, h2] = bbox2;
+
+  const x1End = x1 + w1;
+  const y1End = y1 + h1;
+  const x2End = x2 + w2;
+  const y2End = y2 + h2;
+
+  const interX = Math.max(0, Math.min(x1End, x2End) - Math.max(x1, x2));
+  const interY = Math.max(0, Math.min(y1End, y2End) - Math.max(y1, y2));
+  const interArea = interX * interY;
+
+  const area1 = w1 * h1;
+  const area2 = w2 * h2;
+  const unionArea = area1 + area2 - interArea;
+
+  return unionArea > 0 ? interArea / unionArea : 0;
+}
+
+/**
+ * Average multiple bounding boxes
+ */
+function averageBbox(
+  bboxes: Array<[number, number, number, number]>,
+): [number, number, number, number] {
+  const n = bboxes.length;
+  const sumX = bboxes.reduce((sum, [x]) => sum + x, 0);
+  const sumY = bboxes.reduce((sum, [, y]) => sum + y, 0);
+  const sumW = bboxes.reduce((sum, [, , w]) => sum + w, 0);
+  const sumH = bboxes.reduce((sum, [, , , h]) => sum + h, 0);
+
+  return [
+    Math.round(sumX / n),
+    Math.round(sumY / n),
+    Math.round(sumW / n),
+    Math.round(sumH / n),
+  ];
+}
+
+/**
+ * Confidence filtering: Categorize labels by confidence
+ */
+export interface ConfidenceFilterResult {
+  high: AutoLabel[]; // confidence > 0.75
+  medium: AutoLabel[]; // 0.5 <= confidence <= 0.75
+  low: AutoLabel[]; // confidence < 0.5 (discard)
+}
+
+export function filterByConfidence(labels: AutoLabel[]): ConfidenceFilterResult {
+  const result: ConfidenceFilterResult = {
+    high: [],
+    medium: [],
+    low: [],
+  };
+
+  labels.forEach((label) => {
+    if (label.confidence > 0.75) {
+      result.high.push(label);
+    } else if (label.confidence >= 0.5) {
+      result.medium.push(label);
+    } else {
+      result.low.push(label);
+    }
+  });
+
+  return result;
+}

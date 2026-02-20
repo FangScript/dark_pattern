@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Ensure node is in PATH (for fnm users)
+export PATH="$HOME/Library/Application Support/fnm/aliases/default/bin:$PATH"
+
+npx --no -- commitlint --edit "$1"

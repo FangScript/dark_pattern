@@ -1,0 +1,25 @@
+{
+  "url": "https://books.toscrape.com",
+  "timestamp": "2026-02-19T18:03:32.551296+00:00",
+  "timings_seconds": {
+    "imports": 0.6384281999999075,
+    "browser_launch": 0.48652669999864884,
+    "capture": 10.079494599998725,
+    "save_raw": 0.049257399998168694,
+    "planning": 0.08956559999933233,
+    "verifier": 0.601526800001011,
+    "TOTAL": 12.00564360000135
+  },
+  "capture_stats": {
+    "screenshot_chars": 858852,
+    "dom_chars": 50989,
+    "elements": 289,
+    "interactions": 10
+  },
+  "issues": [
+    {
+      "stage": "Dataset",
+      "error": "'DatasetManager' object has no attribute '_id_counter'"
+    }
+  ]
+}

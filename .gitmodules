@@ -1,0 +1,3 @@
+[submodule "training/ui-tars/models/training/ui-tars/models/UI-TARS-1.5-7B"]
+	path = training/ui-tars/models/training/ui-tars/models/UI-TARS-1.5-7B
+	url = https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B

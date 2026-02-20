@@ -1,0 +1,56 @@
+{
+  "url": "https://www.daraz.pk",
+  "timestamp": "2026-02-19T18:05:12.836612+00:00",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "page_title": "Online Shopping in Pakistan: Fashion, Electronics & Groceries - Daraz.pk",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "text_length": 15643,
+  "dom_length": 522828,
+  "element_count": 1858,
+  "interaction_count": 8,
+  "interactions": [
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 540)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 1080)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 1620)",
+      "revealed_new": true
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 2160)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 2700)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 3240)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 3780)",
+      "revealed_new": false
+    },
+    {
+      "action": "scroll",
+      "target": "scrollTo(0, 4320)",
+      "revealed_new": false
+    }
+  ]
+}
