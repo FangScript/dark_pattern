@@ -130,6 +130,7 @@ export default function LabelReviewPanel({
         bbox: [100, 100, 200, 50],
         confidence: 1.0,
         model: 'manual',
+        viewportIndex: 0,
       },
       verified: null,
     };
@@ -148,6 +149,7 @@ export default function LabelReviewPanel({
         verified: true,
         reviewTimestamp: Date.now(),
         notes: item.notes,
+        viewportIndex: item.autoLabel.viewportIndex,
       }));
 
     if (verifiedLabels.length === 0) {
@@ -169,6 +171,14 @@ export default function LabelReviewPanel({
   const editingItem = editingItemId
     ? reviewItems.find((item) => item.id === editingItemId)
     : null;
+
+  const getScreenshotForEditing = () => {
+    if (editingItem && editingItem.autoLabel.viewportIndex !== undefined && entry.viewport_screenshots) {
+      const vs = entry.viewport_screenshots[editingItem.autoLabel.viewportIndex];
+      if (vs && vs.screenshot) return vs.screenshot;
+    }
+    return entry.screenshot;
+  };
 
   return (
     <div className="label-review-panel">
@@ -232,6 +242,9 @@ export default function LabelReviewPanel({
                           Confidence: {(item.autoLabel.confidence * 100).toFixed(1)}%
                         </Text>
                         <Text type="secondary">Model: {item.autoLabel.model}</Text>
+                        {item.autoLabel.viewportIndex !== undefined && (
+                          <Tag>Viewport {item.autoLabel.viewportIndex + 1}</Tag>
+                        )}
                       </Space>
                       <Space>
                         {item.verified === null && (
@@ -299,7 +312,7 @@ export default function LabelReviewPanel({
       </Card>
 
       {/* Bbox Editor Modal */}
-      {showBboxEditor && editingItem && entry.screenshot && (
+      {showBboxEditor && editingItem && getScreenshotForEditing() && (
         <Modal
           title="Edit Bounding Box"
           open={showBboxEditor}
@@ -312,7 +325,7 @@ export default function LabelReviewPanel({
           style={{ top: 20 }}
         >
           <BboxEditor
-            screenshot={entry.screenshot}
+            screenshot={getScreenshotForEditing()!}
             patterns={[
               {
                 type: editingItem.autoLabel.category,
@@ -322,6 +335,7 @@ export default function LabelReviewPanel({
                 location: editingItem.autoLabel.location || '',
                 evidence: editingItem.autoLabel.evidence || '',
                 confidence: editingItem.autoLabel.confidence,
+                viewportIndex: editingItem.autoLabel.viewportIndex,
               },
             ]}
             onSave={(patterns) => {

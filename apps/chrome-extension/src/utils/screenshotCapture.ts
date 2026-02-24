@@ -17,6 +17,11 @@ export async function captureTabScreenshot(tabId: number): Promise<string> {
 
     try {
       // Capture screenshot using Debugger API
+      // scaleFactor: 1 forces capture at CSS pixel resolution (DPR=1)
+      // This is critical: the VLM processes the image and returns pixel coordinates
+      // relative to the image it sees. OpenAI resizes images before processing,
+      // and if we capture at 2× device pixels the VLM coords will be ~2× off.
+      // Forcing DPR=1 ensures VLM bbox coordinates map 1:1 onto the saved image.
       const result = await chrome.debugger.sendCommand(
         { tabId },
         'Page.captureScreenshot',
@@ -24,6 +29,8 @@ export async function captureTabScreenshot(tabId: number): Promise<string> {
           format: 'png',
           quality: 0.9,
           fromSurface: true,
+          captureBeyondViewport: false,
+          scaleFactor: 1,
         },
       );
 

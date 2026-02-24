@@ -38,6 +38,21 @@ const DARK_PATTERN_TAXONOMY = [
 // VLM Prompt Template for Auto-Labeling (research-grade, strict + evidence-based)
 const AUTO_LABELING_PROMPT = `You are a research-grade dark pattern detection and localization model specialized in e-commerce interfaces.
 
+CONTEXT ISOLATION (CRITICAL — READ FIRST)
+
+You are analyzing ONE SINGLE VIEWPORT SCREENSHOT.
+This screenshot is COMPLETELY INDEPENDENT.
+
+Do NOT:
+- Think about or reference previous screenshots
+- Detect elements not fully visible in this image
+- Assume content above, below, or outside this image
+- Use memory from earlier images
+- Duplicate detections from other viewports
+
+If an element is partially cut off at the edge of the screenshot, DO NOT label it.
+Only detect patterns that are FULLY VISIBLE inside THIS image.
+
 You perform evidence-based visual + structural analysis.
 
 You must prioritize:
@@ -55,7 +70,7 @@ INPUTS
 
 You will receive:
 
-- A full-page screenshot of an e-commerce webpage
+- A SINGLE viewport screenshot of an e-commerce webpage (NOT the full page)
 - The webpage DOM HTML (may be long or partial)
 
 Use BOTH modalities:
@@ -143,6 +158,8 @@ Before finalizing output:
 - Do not label the same UI block under multiple categories unless clearly distinct mechanisms
 - If unsure between two categories → choose the most specific one
 - Avoid over-labeling
+- Maximum 5 patterns per screenshot — if you find more, keep only the highest confidence ones
+- If two bounding boxes overlap by more than 50%, keep only the one with higher confidence
 
 Dataset precision > recall.
 
@@ -411,11 +428,15 @@ export async function autoLabelScreenshot(
         content: [
           {
             type: 'text',
-            text: `Analyze this webpage for dark patterns.
+            text: `SINGLE VIEWPORT SCREENSHOT — Analyze ONLY what is visible in this one image.
+Do NOT assume or reference content from any other screenshot.
+IGNORE previous or next screenshots — this viewport is completely independent.
 
 ${dom ? `DOM Structure (excerpt):\n${dom.substring(0, 2000)}...` : 'DOM not available.'}
 
-Detect all dark patterns and provide bounding boxes with confidence scores.`,
+Detect dark patterns FULLY VISIBLE in this screenshot only.
+Provide precise bounding boxes with confidence scores.
+If unsure, return fewer patterns rather than guessing.`,
           },
           {
             type: 'image_url',
@@ -446,14 +467,54 @@ Detect all dark patterns and provide bounding boxes with confidence scores.`,
       }
     }
 
-    debug(`Auto-labeling complete: ${validatedLabels.length} valid labels`);
-    return validatedLabels;
+    // ── Post-processing: NMS + max cap ──────────────────────────────────
+    // Remove overlapping bboxes (keep higher confidence), then cap at 5
+    const nmsLabels = applyNMS(validatedLabels, 0.5);
+    const cappedLabels = nmsLabels
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 5);
+
+    if (validatedLabels.length !== cappedLabels.length) {
+      debug(`Post-processing: ${validatedLabels.length} → ${cappedLabels.length} labels (NMS + cap)`);
+    }
+
+    debug(`Auto-labeling complete: ${cappedLabels.length} valid labels`);
+    return cappedLabels;
   } catch (error) {
     debug('Auto-labeling failed:', error);
     throw new Error(
       `Auto-labeling failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+/**
+ * Non-Maximum Suppression (NMS): Remove overlapping bboxes, keeping highest confidence
+ */
+function applyNMS(labels: AutoLabel[], iouThreshold: number): AutoLabel[] {
+  if (labels.length <= 1) return labels;
+
+  // Sort descending by confidence
+  const sorted = [...labels].sort((a, b) => b.confidence - a.confidence);
+  const kept: AutoLabel[] = [];
+  const suppressed = new Set<number>();
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (suppressed.has(i)) continue;
+    kept.push(sorted[i]);
+
+    // Suppress lower-confidence boxes that overlap too much
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (suppressed.has(j)) continue;
+      const iou = calculateIoU(sorted[i].bbox, sorted[j].bbox);
+      if (iou >= iouThreshold) {
+        suppressed.add(j);
+        debug(`NMS: suppressed "${sorted[j].category}" (conf=${sorted[j].confidence.toFixed(2)}) — overlaps "${sorted[i].category}" (IoU=${iou.toFixed(2)})`);
+      }
+    }
+  }
+
+  return kept;
 }
 
 /**

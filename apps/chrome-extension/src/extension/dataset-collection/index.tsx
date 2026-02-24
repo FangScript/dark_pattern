@@ -40,6 +40,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useGlobalAIConfig } from '../../hooks/useGlobalAIConfig';
 import { getAIConfig, getActiveModelConfig } from '../../utils/aiConfig';
 import { drawBboxesOnImage } from '../../utils/bboxOverlay';
+import { buildFullPageCanvas, viewportToPageAbsolute, type ViewportCaptureWithDPR } from '../../utils/coordinateUtils';
 import {
   exportAnnotatedImages,
   exportAsCOCO,
@@ -75,6 +76,100 @@ import './index.less';
 
 const { Text, Paragraph } = Typography;
 const debug = getDebug('dataset-collection');
+
+/**
+ * Wrapper that stitches viewport screenshots into a full-page canvas
+ * and converts per-viewport bboxes to page-absolute coordinates
+ * before passing them to BboxEditor.
+ */
+function StitchedBboxEditor({
+  entry,
+  onSave,
+  onCancel,
+}: {
+  entry: DatasetEntry;
+  onSave: (patterns: DarkPattern[]) => void;
+  onCancel: () => void;
+}) {
+  const [stitchedScreenshot, setStitchedScreenshot] = useState<string | null>(null);
+  const [absolutePatterns, setAbsolutePatterns] = useState<DarkPattern[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const prepare = async () => {
+      setLoading(true);
+      try {
+        const viewportScreenshots = entry.viewport_screenshots;
+
+        if (viewportScreenshots && viewportScreenshots.length > 0) {
+          // Build ViewportCaptureWithDPR array for stitching
+          const vpCaptures: ViewportCaptureWithDPR[] = viewportScreenshots.map((vs) => ({
+            screenshot: vs.screenshot,
+            patterns: vs.patterns || [],
+            viewportWidth: vs.viewportWidth,
+            viewportHeight: vs.viewportHeight,
+            scrollY: vs.scrollY,
+            devicePixelRatio: vs.devicePixelRatio ?? 1,
+            stepLabel: vs.stepLabel,
+            phase: vs.phase,
+          }));
+
+          // Build stitched canvas WITHOUT drawing bboxes (BboxEditor will draw them)
+          const stitched = await buildFullPageCanvas(vpCaptures, false);
+          setStitchedScreenshot(stitched);
+
+          // Convert per-viewport bboxes to page-absolute coordinates
+          const absPatterns: DarkPattern[] = [];
+          for (const vp of vpCaptures) {
+            for (const p of vp.patterns) {
+              if (!p.bbox || p.bbox.length !== 4) continue;
+              const abs = viewportToPageAbsolute(p.bbox, vp);
+              absPatterns.push({
+                type: p.category,
+                description: p.description || p.evidence || `${p.category} detected`,
+                severity: (p.severity as DarkPattern['severity']) || 'medium',
+                location: p.location || '',
+                evidence: p.evidence || '',
+                confidence: p.confidence,
+                bbox: [abs.x, abs.y, abs.width, abs.height],
+              });
+            }
+          }
+          setAbsolutePatterns(absPatterns);
+        } else {
+          // Fallback: single screenshot with all patterns
+          setStitchedScreenshot(entry.screenshot ?? null);
+          setAbsolutePatterns(getEffectivePatterns(entry));
+        }
+      } catch (err) {
+        console.error('[StitchedBboxEditor] Failed to stitch:', err);
+        // Fallback
+        setStitchedScreenshot(entry.screenshot ?? null);
+        setAbsolutePatterns(getEffectivePatterns(entry));
+      } finally {
+        setLoading(false);
+      }
+    };
+    prepare();
+  }, [entry]);
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><Spin tip="Stitching viewport screenshots..." /></div>;
+  }
+
+  if (!stitchedScreenshot) {
+    return <div style={{ padding: 24 }}>No screenshot available</div>;
+  }
+
+  return (
+    <BboxEditor
+      screenshot={stitchedScreenshot}
+      patterns={absolutePatterns}
+      onSave={onSave}
+      onCancel={onCancel}
+    />
+  );
+}
 
 // Enhanced dark pattern detection prompt for Pakistani e-commerce (18-category taxonomy)
 const DARK_PATTERN_PROMPT = `You are a Dark Pattern Detection AI expert specializing in Pakistani e-commerce websites.
@@ -640,6 +735,7 @@ export default function DatasetCollection() {
         viewportWidth: v.viewportWidth,
         viewportHeight: v.viewportHeight,
         scrollY: v.scrollY,
+        devicePixelRatio: v.devicePixelRatio,
         stepLabel: v.stepLabel,
         phase: v.phase,
       }));
@@ -2388,7 +2484,7 @@ export default function DatasetCollection() {
         </Modal>
       )}
 
-      {showBboxEditor && editingEntry && editingEntry.screenshot && (
+      {showBboxEditor && editingEntry && (editingEntry.screenshot || editingEntry.viewport_screenshots) && (
         <Modal
           title="Edit Bounding Boxes"
           open={true}
@@ -2402,9 +2498,8 @@ export default function DatasetCollection() {
           bodyStyle={{ height: '80vh', padding: 0 }}
           destroyOnClose
         >
-          <BboxEditor
-            screenshot={editingEntry.screenshot}
-            patterns={getEffectivePatterns(editingEntry)}
+          <StitchedBboxEditor
+            entry={editingEntry}
             onSave={handleSaveBboxEdits}
             onCancel={() => {
               setShowBboxEditor(false);

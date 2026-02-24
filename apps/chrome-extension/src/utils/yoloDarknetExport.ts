@@ -341,6 +341,7 @@ export async function exportFromEntries(
       viewportWidth: number;
       viewportHeight: number;
       scrollY: number;
+      devicePixelRatio?: number;
       stepLabel: string;
       phase: 'scan' | 'interact';
     }>;
@@ -359,6 +360,7 @@ export async function exportFromEntries(
         viewportWidth: vs.viewportWidth,
         viewportHeight: vs.viewportHeight,
         scrollY: vs.scrollY,
+        devicePixelRatio: vs.devicePixelRatio ?? 1,
         stepLabel: vs.stepLabel,
         phase: vs.phase,
       });

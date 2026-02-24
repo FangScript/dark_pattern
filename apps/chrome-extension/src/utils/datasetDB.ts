@@ -19,6 +19,7 @@ export interface AutoLabel {
   severity?: 'low' | 'medium' | 'high' | 'critical';
   location?: string;
   evidence?: string;
+  viewportIndex?: number; // Which viewport this pattern was detected in
 }
 
 // Verified label from human reviewer
@@ -29,6 +30,7 @@ export interface VerifiedLabel {
   reviewer?: string; // Optional reviewer identifier
   reviewTimestamp?: number;
   notes?: string;
+  viewportIndex?: number; // Match the source viewport
 }
 
 // Dataset entry status
@@ -52,10 +54,11 @@ export interface DatasetEntry {
   // Patterns in each viewport have bboxes RELATIVE to that screenshot.
   viewport_screenshots?: Array<{
     screenshot: string;           // base64 data URL
-    patterns: AutoLabel[];        // patterns with bboxes relative to THIS screenshot
-    viewportWidth: number;
-    viewportHeight: number;
-    scrollY: number;              // page scroll offset when captured
+    patterns: AutoLabel[];        // patterns with bboxes relative to THIS screenshot (device pixels)
+    viewportWidth: number;        // CSS pixels
+    viewportHeight: number;       // CSS pixels
+    scrollY: number;              // CSS pixels — page scroll offset when captured
+    devicePixelRatio: number;     // DPR at capture time
     stepLabel: string;            // "scan-0", "scan-1", "interact-expand", etc.
     phase: 'scan' | 'interact';
   }>;
@@ -93,6 +96,7 @@ export interface DarkPattern {
   confidence?: number;
   bbox?: [number, number, number, number]; // [x, y, width, height]
   croppedImage?: string; // Individual cropped image showing ONLY this pattern (base64 data URL)
+  viewportIndex?: number;
 }
 
 // IndexedDB entry interface (for storage)

@@ -24,10 +24,11 @@ import type { AIArgs } from '@darkpatternhunter/core/ai-model';
 /** One viewport screenshot + the patterns detected in it */
 export interface ViewportCapture {
   screenshot: string;           // base64 data URL (JPEG or PNG)
-  patterns: AutoLabel[];        // patterns with bboxes RELATIVE to this screenshot
-  viewportWidth: number;        // pixels
-  viewportHeight: number;       // pixels
-  scrollY: number;              // page scroll offset when captured
+  patterns: AutoLabel[];        // patterns with bboxes RELATIVE to this screenshot (device pixels)
+  viewportWidth: number;        // CSS pixels
+  viewportHeight: number;       // CSS pixels
+  scrollY: number;              // CSS pixels — page scroll offset when captured
+  devicePixelRatio: number;     // DPR at capture time (screenshot is viewportWidth × DPR wide)
   stepLabel: string;            // "scan-0", "scan-1", "interact-expand", etc.
   phase: 'scan' | 'interact';  // which phase produced this viewport
 }
@@ -84,9 +85,10 @@ async function getViewportMeta(tabId: number) {
       h: window.innerHeight,
       y: Math.round(window.scrollY),
       scrollHeight: document.body.scrollHeight,
+      dpr: window.devicePixelRatio || 1,
     }),
   });
-  return results[0]?.result ?? { w: 1280, h: 720, y: 0, scrollHeight: 3000 };
+  return results[0]?.result ?? { w: 1280, h: 720, y: 0, scrollHeight: 3000, dpr: 1 };
 }
 
 async function scrollTo(tabId: number, position: 'top' | 'down'): Promise<void> {
@@ -351,6 +353,7 @@ export async function runAgentLoop(
     scrollY: number;
     viewportWidth: number;
     viewportHeight: number;
+    devicePixelRatio: number;
     index: number;
   }
   
@@ -378,6 +381,7 @@ export async function runAgentLoop(
           scrollY: vmeta.y,
           viewportWidth: vmeta.w,
           viewportHeight: vmeta.h,
+          devicePixelRatio: vmeta.dpr,
           index: i,
         });
 
@@ -418,6 +422,7 @@ export async function runAgentLoop(
         viewportWidth: cap.viewportWidth,
         viewportHeight: cap.viewportHeight,
         scrollY: cap.scrollY,
+        devicePixelRatio: cap.devicePixelRatio,
         stepLabel: `scan-${cap.index}`,
         phase: 'scan',
       });
@@ -470,6 +475,7 @@ export async function runAgentLoop(
         viewportWidth: vmeta.w,
         viewportHeight: vmeta.h,
         scrollY: vmeta.y,
+        devicePixelRatio: vmeta.dpr,
         stepLabel: `interact-${element.type}-${element.description.substring(0, 20)}`,
         phase: 'interact',
       });
@@ -486,11 +492,15 @@ export async function runAgentLoop(
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onProgress('Finalizing results...');
 
-  // Collect all patterns across all viewports
+  // Collect all patterns across all viewports, tagging them with their source viewport
   const allPatterns: AutoLabel[] = [];
-  for (const v of viewports) {
-    allPatterns.push(...v.patterns);
-  }
+  viewports.forEach((v, vIdx) => {
+    // Stamp the viewportIndex onto each pattern before pushing
+    v.patterns.forEach(p => {
+      p.viewportIndex = vIdx;
+      allPatterns.push(p);
+    });
+  });
 
   const deduped = deduplicatePatterns(allPatterns);
   const viewportsWithPatterns = viewports.filter((v) => v.patterns.length > 0);

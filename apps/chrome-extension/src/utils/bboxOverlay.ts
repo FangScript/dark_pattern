@@ -3,6 +3,9 @@
  * Draw bounding boxes on screenshots for dark pattern visualization
  */
 
+// Re-export full-page stitching from coordinateUtils
+export { buildFullPageCanvas } from './coordinateUtils';
+
 export interface BboxStyle {
   strokeColor: string;
   fillColor: string;
