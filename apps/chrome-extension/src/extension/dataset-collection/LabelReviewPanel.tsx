@@ -1,8 +1,10 @@
 /**
  * Human Review Panel for Label Verification
- * 
+ *
  * Allows reviewers to:
- * - View auto-generated labels
+ * - View auto-generated labels with full details
+ * - View cropped evidence image from screenshot
+ * - See location, description, and countermeasures
  * - Accept/reject labels
  * - Edit bounding boxes
  * - Add new labels manually
@@ -14,23 +16,28 @@ import {
   CloseOutlined,
   EditOutlined,
   PlusOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import {
   Button,
   Card,
+  Col,
+  Divider,
+  Input,
   Modal,
+  Row,
   Select,
   Space,
   Tag,
   Typography,
   message,
 } from 'antd';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AutoLabel, DatasetEntry, VerifiedLabel } from '../../utils/datasetDB';
 import BboxEditor from './BboxEditor';
 import './LabelReviewPanel.less';
 
-const { Text, Title } = Typography;
+const { Text, Title, Paragraph } = Typography;
 
 // 18-category taxonomy
 const PATTERN_CATEGORIES = [
@@ -54,6 +61,72 @@ const PATTERN_CATEGORIES = [
   'Gamification Pressure',
 ] as const;
 
+// Countermeasures for each dark pattern category
+const COUNTERMEASURES: Record<string, string> = {
+  'Nagging': 'Use browser extensions to block repetitive popups. Close or dismiss the prompt — you are not obligated to act on repeated requests.',
+  'Scarcity & Popularity': 'Verify scarcity claims independently. Low stock indicators are frequently fabricated. Check back later to see if the item restocks.',
+  'FOMO / Urgency': 'Ignore countdown timers — they often reset on refresh. Take your time to research before purchasing.',
+  'Reference Pricing': 'Research the actual market price on multiple platforms before assuming the crossed-out price is genuine.',
+  'Disguised Ads': 'Look for Sponsored, Ad, or Promoted labels. Ad-blockers can remove many disguised ads automatically.',
+  'False Hierarchy': 'Read all button options carefully. The less prominent button (small, gray) may be the better choice for you.',
+  'Interface Interference': 'Look for all available options before clicking the default highlighted button — it may not be in your best interest.',
+  'Misdirection': 'Slow down and read the full context before clicking. Visual accents may draw your eye away from important information.',
+  'Hard To Close': 'Look for the full browser close button (Alt+F4, ⌘W) or navigate away if dismiss buttons are hidden.',
+  'Obstruction': 'Search for the direct path (e.g., account deletion URL) rather than following the in-app flow.',
+  'Bundling': 'Always review the order summary before confirming a purchase to find pre-checked add-ons.',
+  'Sneaking': 'Review your cart and checkout summary carefully for items you didn\'t actively add.',
+  'Hidden Information': 'Always expand all pricing sections and fee breakdowns before checkout.',
+  'Subscription Trap': 'Read all terms before free trial sign-ups. Set a calendar reminder to cancel before billing begins.',
+  'Roach Motel': 'Look for account deletion via the app\'s settings, or contact support directly. Check for a browser-based account portal.',
+  'Confirmshaming': 'Recognize that "No thanks, I don\'t want to save money" is a manipulation tactic — decline confidently.',
+  'Forced Registration': 'Look for a Guest Checkout option. Use a temporary email service if registration is truly required.',
+  'Gamification Pressure': 'Streaks, coins, and progress bars are artificial scarcity — ignore the pressure and act on your own terms.',
+};
+
+/**
+ * Crop a region from a base64 screenshot using bbox [x, y, w, h].
+ * Returns a new base64 data URL of the cropped region, or null if failed.
+ */
+async function cropEvidence(
+  screenshot: string,
+  bbox: [number, number, number, number],
+): Promise<string | null> {
+  if (!screenshot || !bbox || bbox.length !== 4) return null;
+  const [x, y, w, h] = bbox;
+  if (w <= 0 || h <= 0) return null;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      // Add padding around the bbox for context
+      const pad = 20;
+      const sx = Math.max(0, x - pad);
+      const sy = Math.max(0, y - pad);
+      const sw = Math.min(img.width - sx, w + pad * 2);
+      const sh = Math.min(img.height - sy, h + pad * 2);
+
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(null); return; }
+
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      // Draw a highlight rect for the actual bbox
+      const bx = x - sx;
+      const by = y - sy;
+      ctx.strokeStyle = '#ff4d4f';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(bx, by, w, h);
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(null);
+    img.src = screenshot;
+  });
+}
+
 interface LabelReviewPanelProps {
   entry: DatasetEntry;
   onSave: (verifiedLabels: VerifiedLabel[]) => void;
@@ -63,9 +136,54 @@ interface LabelReviewPanelProps {
 interface ReviewItem {
   id: string;
   autoLabel: AutoLabel;
-  verified: boolean | null; // null = pending, true = accepted, false = rejected
+  verified: boolean | null;
   editedBbox?: [number, number, number, number];
+  editedCategory?: string;
+  editedLocation?: string;
+  editedDescription?: string;
+  editedEvidence?: string;
   notes?: string;
+}
+
+/** Evidence image subcomponent — crops and displays the screenshot region. */
+function EvidenceImage({
+  screenshot,
+  bbox,
+}: {
+  screenshot: string | undefined;
+  bbox: [number, number, number, number];
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!screenshot) { setLoading(false); return; }
+    cropEvidence(screenshot, bbox).then((result) => {
+      setSrc(result);
+      setLoading(false);
+    });
+  }, [screenshot, bbox?.join(',')]);
+
+  if (loading) {
+    return <Text type="secondary" style={{ fontSize: '12px' }}>Loading evidence image...</Text>;
+  }
+  if (!src) {
+    return <Text type="secondary" style={{ fontSize: '12px' }}>No screenshot available for this pattern.</Text>;
+  }
+  return (
+    <img
+      src={src}
+      alt="Evidence"
+      style={{
+        width: '100%',
+        maxHeight: 220,
+        objectFit: 'contain',
+        borderRadius: 6,
+        border: '1px solid #f0f0f0',
+        background: '#fafafa',
+      }}
+    />
+  );
 }
 
 export default function LabelReviewPanel({
@@ -74,7 +192,6 @@ export default function LabelReviewPanel({
   onCancel,
 }: LabelReviewPanelProps) {
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>(() => {
-    // Initialize from auto_labels
     return (entry.auto_labels || []).map((autoLabel, idx) => ({
       id: `review-${idx}`,
       autoLabel,
@@ -122,6 +239,26 @@ export default function LabelReviewPanel({
     }
   };
 
+  const handleCategoryChange = (itemId: string, category: string) => {
+    setReviewItems((items) =>
+      items.map((item) =>
+        item.id === itemId ? { ...item, editedCategory: category } : item
+      )
+    );
+  };
+
+  const handleFieldChange = (
+    itemId: string,
+    field: 'editedLocation' | 'editedDescription' | 'editedEvidence',
+    value: string,
+  ) => {
+    setReviewItems((items) =>
+      items.map((item) =>
+        item.id === itemId ? { ...item, [field]: value } : item
+      )
+    );
+  };
+
   const handleAddManualLabel = () => {
     const newItem: ReviewItem = {
       id: `manual-${Date.now()}`,
@@ -140,16 +277,18 @@ export default function LabelReviewPanel({
   };
 
   const handleSave = () => {
-    // Convert review items to verified labels
     const verifiedLabels: VerifiedLabel[] = reviewItems
       .filter((item) => item.verified === true)
       .map((item) => ({
-        category: item.autoLabel.category,
+        category: item.editedCategory || item.autoLabel.category,
         bbox: item.editedBbox || item.autoLabel.bbox,
         verified: true,
         reviewTimestamp: Date.now(),
         notes: item.notes,
         viewportIndex: item.autoLabel.viewportIndex,
+        location: item.editedLocation ?? item.autoLabel.location,
+        description: item.editedDescription ?? item.autoLabel.description,
+        evidence: item.editedEvidence ?? item.autoLabel.evidence,
       }));
 
     if (verifiedLabels.length === 0) {
@@ -172,12 +311,19 @@ export default function LabelReviewPanel({
     ? reviewItems.find((item) => item.id === editingItemId)
     : null;
 
-  const getScreenshotForEditing = () => {
-    if (editingItem && editingItem.autoLabel.viewportIndex !== undefined && entry.viewport_screenshots) {
-      const vs = entry.viewport_screenshots[editingItem.autoLabel.viewportIndex];
-      if (vs && vs.screenshot) return vs.screenshot;
+  const getScreenshotForViewport = (viewportIndex?: number): string | undefined => {
+    if (viewportIndex !== undefined && entry.viewport_screenshots) {
+      const vs = entry.viewport_screenshots[viewportIndex];
+      if (vs?.screenshot) return vs.screenshot;
     }
     return entry.screenshot;
+  };
+
+  const getSeverityColor = (severity?: string) => {
+    const map: Record<string, string> = {
+      critical: 'red', high: 'orange', medium: 'gold', low: 'green',
+    };
+    return map[severity || 'medium'] || 'blue';
   };
 
   return (
@@ -186,7 +332,7 @@ export default function LabelReviewPanel({
         title={
           <div>
             <Title level={4} style={{ margin: 0 }}>
-              Review Auto-Generated Labels
+              Manual Label Review
             </Title>
             <Text type="secondary" style={{ fontSize: '12px' }}>
               {entry.url}
@@ -206,10 +352,8 @@ export default function LabelReviewPanel({
           {/* Instructions */}
           <Card size="small" type="inner">
             <Text>
-              Review each auto-generated label below. Click{' '}
-              <CheckOutlined style={{ color: '#52c41a' }} /> to accept,{' '}
-              <CloseOutlined style={{ color: '#ff4d4f' }} /> to reject, or{' '}
-              <EditOutlined /> to edit the bounding box.
+              Review each auto-generated label below. For manual additions, click{' '}
+              <strong>+ Add Manual Label</strong>, then draw a bounding box on the screenshot.
             </Text>
           </Card>
 
@@ -217,35 +361,55 @@ export default function LabelReviewPanel({
           <div className="review-items-list">
             {reviewItems.length === 0 ? (
               <Card>
-                <Text type="secondary">No auto-labels to review.</Text>
+                <Text type="secondary">
+                  No auto-labels found. Click <strong>+ Add Manual Label</strong> to add annotations from scratch.
+                </Text>
               </Card>
             ) : (
-              reviewItems.map((item) => (
-                <Card
-                  key={item.id}
-                  size="small"
-                  style={{
-                    marginBottom: 8,
-                    border:
-                      item.verified === true
-                        ? '2px solid #52c41a'
-                        : item.verified === false
-                          ? '2px solid #ff4d4f'
-                          : '1px solid #d9d9d9',
-                  }}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }} size="small">
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Space>
-                        <Tag color="blue">{item.autoLabel.category}</Tag>
-                        <Text type="secondary">
-                          Confidence: {(item.autoLabel.confidence * 100).toFixed(1)}%
-                        </Text>
-                        <Text type="secondary">Model: {item.autoLabel.model}</Text>
+              reviewItems.map((item) => {
+                const category = item.editedCategory || item.autoLabel.category;
+                const bbox = item.editedBbox || item.autoLabel.bbox;
+                const screenshot = getScreenshotForViewport(item.autoLabel.viewportIndex);
+                const countermeasure = COUNTERMEASURES[category] || 'No countermeasure info available for this pattern.';
+
+                return (
+                  <Card
+                    key={item.id}
+                    size="small"
+                    style={{
+                      marginBottom: 12,
+                      border:
+                        item.verified === true
+                          ? '2px solid #52c41a'
+                          : item.verified === false
+                            ? '2px solid #ff4d4f'
+                            : '1px solid #d9d9d9',
+                    }}
+                  >
+                    {/* Header row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                      <Space wrap>
+                        <Tag color={getSeverityColor(item.autoLabel.severity)}>
+                          {(item.autoLabel.severity || 'medium').toUpperCase()}
+                        </Tag>
+                        <Select
+                          value={category}
+                          size="small"
+                          style={{ minWidth: 200 }}
+                          onChange={(val) => handleCategoryChange(item.id, val)}
+                          options={PATTERN_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                        />
+                        {item.autoLabel.model !== 'manual' && (
+                          <Text type="secondary" style={{ fontSize: '11px' }}>
+                            Model: {item.autoLabel.model} | Conf: {(item.autoLabel.confidence * 100).toFixed(0)}%
+                          </Text>
+                        )}
                         {item.autoLabel.viewportIndex !== undefined && (
                           <Tag>Viewport {item.autoLabel.viewportIndex + 1}</Tag>
                         )}
+                        {item.editedBbox && <Tag color="orange">Bbox edited</Tag>}
                       </Space>
+
                       <Space>
                         {item.verified === null && (
                           <>
@@ -275,31 +439,111 @@ export default function LabelReviewPanel({
                           </>
                         )}
                         {item.verified === true && (
-                          <Tag color="success">✓ Accepted</Tag>
+                          <Space>
+                            <Tag color="success">✓ Accepted</Tag>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => handleEditBbox(item.id)}>
+                              Edit Box
+                            </Button>
+                          </Space>
                         )}
                         {item.verified === false && (
                           <Tag color="error">✗ Rejected</Tag>
                         )}
                       </Space>
                     </div>
-                    {item.autoLabel.description && (
-                      <Text type="secondary" style={{ fontSize: '12px' }}>
-                        {item.autoLabel.description}
-                      </Text>
-                    )}
-                    {item.editedBbox && (
-                      <Tag color="orange">Bounding box edited</Tag>
-                    )}
-                  </Space>
-                </Card>
-              ))
+
+                    <Divider style={{ margin: '8px 0' }} />
+
+                    <Row gutter={16}>
+                      {/* Left column: details */}
+                      <Col span={12}>
+                        <Space direction="vertical" style={{ width: '100%' }} size="small">
+
+                          {/* Location */}
+                          <div>
+                            <Text strong style={{ fontSize: '12px' }}>📍 Location:</Text>
+                            <Input
+                              style={{ marginTop: 4 }}
+                              size="small"
+                              placeholder="e.g. product card, checkout header..."
+                              value={item.editedLocation ?? (item.autoLabel.location || '')}
+                              onChange={(e) => handleFieldChange(item.id, 'editedLocation', e.target.value)}
+                            />
+                          </div>
+
+                          {/* Description */}
+                          <div>
+                            <Text strong style={{ fontSize: '12px' }}>📝 Description:</Text>
+                            <Input.TextArea
+                              style={{ marginTop: 4 }}
+                              size="small"
+                              rows={3}
+                              placeholder="Describe why this is a dark pattern..."
+                              value={item.editedDescription ?? (item.autoLabel.description || '')}
+                              onChange={(e) => handleFieldChange(item.id, 'editedDescription', e.target.value)}
+                            />
+                          </div>
+
+                          {/* Bounding Box */}
+                          {bbox && bbox.length === 4 && (
+                            <div>
+                              <Text strong style={{ fontSize: '12px' }}>📐 Bounding Box:</Text>
+                              <br />
+                              <Text code style={{ fontSize: '11px' }}>
+                                x:{bbox[0]} y:{bbox[1]} w:{bbox[2]} h:{bbox[3]}
+                              </Text>
+                            </div>
+                          )}
+
+                          {/* Countermeasures */}
+                          <div style={{
+                            background: '#f6ffed',
+                            border: '1px solid #b7eb8f',
+                            borderRadius: 6,
+                            padding: '8px 10px',
+                            marginTop: 4,
+                          }}>
+                            <Text strong style={{ fontSize: '12px', color: '#389e0d' }}>
+                              🛡️ Countermeasure:
+                            </Text>
+                            <br />
+                            <Text style={{ fontSize: '11px' }}>{countermeasure}</Text>
+                          </div>
+                        </Space>
+                      </Col>
+
+                      {/* Right column: evidence */}
+                      <Col span={12}>
+                        <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>
+                          🔍 Evidence (text):
+                        </Text>
+                        <Input.TextArea
+                          rows={2}
+                          size="small"
+                          style={{ marginBottom: 8 }}
+                          placeholder="Exact text or element that proves this pattern..."
+                          value={item.editedEvidence ?? (item.autoLabel.evidence || '')}
+                          onChange={(e) => handleFieldChange(item.id, 'editedEvidence', e.target.value)}
+                        />
+                        <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>
+                          🖼️ Evidence (Cropped Screenshot):
+                        </Text>
+                        <EvidenceImage
+                          screenshot={screenshot}
+                          bbox={bbox || [0, 0, 0, 0]}
+                        />
+                      </Col>
+                    </Row>
+                  </Card>
+                );
+              })
             )}
           </div>
 
           {/* Actions */}
           <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-            <Button icon={<PlusOutlined />} onClick={handleAddManualLabel}>
-              Add Manual Label
+            <Button icon={<PlusOutlined />} onClick={handleAddManualLabel} type="dashed">
+              + Add Manual Label
             </Button>
             <Space>
               <Button onClick={onCancel}>Cancel</Button>
@@ -312,7 +556,7 @@ export default function LabelReviewPanel({
       </Card>
 
       {/* Bbox Editor Modal */}
-      {showBboxEditor && editingItem && getScreenshotForEditing() && (
+      {showBboxEditor && editingItem && (
         <Modal
           title="Edit Bounding Box"
           open={showBboxEditor}
@@ -325,10 +569,10 @@ export default function LabelReviewPanel({
           style={{ top: 20 }}
         >
           <BboxEditor
-            screenshot={getScreenshotForEditing()!}
+            screenshot={getScreenshotForViewport(editingItem.autoLabel.viewportIndex) || ''}
             patterns={[
               {
-                type: editingItem.autoLabel.category,
+                type: editingItem.editedCategory || editingItem.autoLabel.category,
                 bbox: editingItem.editedBbox || editingItem.autoLabel.bbox,
                 description: editingItem.autoLabel.description || '',
                 severity: editingItem.autoLabel.severity || 'medium',

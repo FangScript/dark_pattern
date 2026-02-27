@@ -31,6 +31,10 @@ export interface VerifiedLabel {
   reviewTimestamp?: number;
   notes?: string;
   viewportIndex?: number; // Match the source viewport
+  // Metadata filled in by human (or carried over from AI label)
+  location?: string;
+  description?: string;
+  evidence?: string;
 }
 
 // Dataset entry status

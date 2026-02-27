@@ -131,6 +131,50 @@ async function dismissPopups(tabId: number): Promise<void> {
   }
 }
 
+// ── Viewport width lock ──────────────────────────────────────────────────────
+// When the extension panel is open, it reduces the browser window width which
+// shrinks `window.innerWidth` in the target tab. This causes inconsistent
+// screenshots. We neutralage this by injecting CSS that forces the root element
+// to behave as a 1280px wide viewport regardless of the actual window width.
+const TARGET_VIEWPORT_WIDTH = 1280;
+
+async function lockViewportWidth(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (targetWidth: number) => {
+        // Remove any previous lock style
+        const existing = document.getElementById('__dph_viewport_lock__');
+        if (existing) existing.remove();
+
+        const style = document.createElement('style');
+        style.id = '__dph_viewport_lock__';
+        style.textContent = `
+          /* Dark Pattern Hunter — viewport lock for consistent screenshots */
+          html, body {
+            min-width: ${targetWidth}px !important;
+            overflow-x: visible !important;
+          }
+          meta[name="viewport"] { content: "width=${targetWidth}" !important; }
+        `;
+        document.head.appendChild(style);
+
+        // Also update the viewport meta tag if present
+        const metaViewport = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+        if (metaViewport) {
+          metaViewport.content = `width=${targetWidth}`;
+        }
+      },
+      args: [TARGET_VIEWPORT_WIDTH],
+    });
+    // Give layout one tick to stabilise
+    await new Promise((r) => setTimeout(r, 400));
+  } catch {
+    // Optional — non-fatal if CSP blocks script injection
+    console.warn('[agent] Could not lock viewport width (CSP may have blocked it)');
+  }
+}
+
 // ── Single screenshot analysis ──────────────────────────────────────────────
 
 async function analyzeScreenshot(
@@ -336,12 +380,21 @@ export async function runAgentLoop(
   let screenshotCount = 0;
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  //  PRE-PHASE: Lock viewport to a consistent 1280px width
+  //  This prevents the extension panel width from shrinking `window.innerWidth`
+  //  and producing inconsistent/narrow screenshots.
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  await lockViewportWidth(tabId);
+  agentSteps.push(`pre-phase: viewport locked to ${TARGET_VIEWPORT_WIDTH}px`);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   //  PHASE 0: Dismiss popups/overlays
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onProgress('Phase 0: Dismissing popups...');
   await dismissPopups(tabId);
   await scrollTo(tabId, 'top');
   agentSteps.push('phase-0: dismissed popups');
+
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   //  PHASE 1: SCAN — Screenshot every viewport of the page

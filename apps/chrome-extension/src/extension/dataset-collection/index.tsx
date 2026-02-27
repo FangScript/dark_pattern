@@ -36,7 +36,7 @@ import {
   message,
 } from 'antd';
 import dayjs from 'dayjs';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useGlobalAIConfig } from '../../hooks/useGlobalAIConfig';
 import { getAIConfig, getActiveModelConfig } from '../../utils/aiConfig';
 import { drawBboxesOnImage } from '../../utils/bboxOverlay';
@@ -261,6 +261,8 @@ export default function DatasetCollection() {
     queue: number;
     currentUrl: string;
   } | null>(null);
+  const [showCrawlModal, setShowCrawlModal] = useState(false);
+  const stopCrawlRef = useRef(false);
   const [statistics, setStatistics] = useState<{
     totalEntries: number;
     totalPatterns: number;
@@ -813,8 +815,9 @@ export default function DatasetCollection() {
     }
   };
 
-  const processUrlQueue = async () => {
-    if (urlQueue.length === 0 || isProcessingQueue) return;
+  const processUrlQueue = async (directUrls?: string[]) => {
+    const urls = directUrls ?? urlQueue;
+    if (urls.length === 0 || isProcessingQueue) return;
 
     if (!readyState.isReady) {
       Modal.warning({
@@ -835,11 +838,11 @@ export default function DatasetCollection() {
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < urlQueue.length; i++) {
-      const url = urlQueue[i];
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
       setProgress({
         current: i + 1,
-        total: urlQueue.length,
+        total: urls.length,
         url,
         status: 'Processing...',
       });
@@ -875,37 +878,75 @@ export default function DatasetCollection() {
           prev ? { ...prev, status: 'Capturing page data...' } : null,
         );
 
-        // Capture and analyze
-        const { screenshot, dom, metadata } = await capturePageData(tab.id);
-
+        // Capture initial screenshot as fallback + get metadata
+        const { screenshot, dom: domInit, metadata: metaInit } = await capturePageData(tab.id);
         const isPakistaniSite = isPakistaniEcommerceSite(url);
         const siteName = getSiteName(url);
 
         setProgress((prev) =>
-          prev ? { ...prev, status: 'Analyzing with AI...' } : null,
+          prev ? { ...prev, status: 'Scanning all viewports with AI...' } : null,
         );
 
-        const { patterns, summary } = await analyzePageForDarkPatterns(
-          screenshot,
-          dom,
-          url,
-        );
+        // Use the same phased agent loop as "Analyze Current Page"
+        // This scrolls the full page and captures every viewport
+        const agentResult = await runAgentLoop(tab.id!, (msg) => {
+          setProgress((prev) =>
+            prev ? { ...prev, status: msg } : null,
+          );
+        });
+
+        const autoLabels = await agentPatternsToAutoLabels(agentResult.patterns);
+
+        // Use first viewport screenshot as the thumbnail
+        let screenshotForEntry: string = screenshot; // fallback
+        if (agentResult.viewports.length > 0) {
+          screenshotForEntry = agentResult.viewports[0].screenshot;
+        }
+
+        const { dom: domData, metadata: metaData } = await capturePageData(tab.id);
+
+
+        // Store all viewport screenshots just like performAnalysis
+        const viewportScreenshots = agentResult.viewports.map((v) => ({
+          screenshot: v.screenshot,
+          patterns: v.patterns,
+          viewportWidth: v.viewportWidth,
+          viewportHeight: v.viewportHeight,
+          scrollY: v.scrollY,
+          devicePixelRatio: v.devicePixelRatio,
+          stepLabel: v.stepLabel,
+          phase: v.phase,
+        }));
 
         const entry: DatasetEntry = {
           id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           url,
           timestamp: Date.now(),
-          screenshot,
-          dom: dom.substring(0, 10000),
-          patterns,
-          status: patterns.length > 0 ? 'auto' : 'raw',
+          screenshot: screenshotForEntry,
+          dom: domData.substring(0, 10000),
+          auto_labels: autoLabels,
+          verified_labels: undefined,
+          patterns: [],
+          status: autoLabels.length > 0 ? 'auto' : 'raw',
+          viewport_screenshots: viewportScreenshots,
+          summary: {
+            total_patterns: autoLabels.length,
+            prevalence_score: autoLabels.length > 0 ? autoLabels.filter(l => l.confidence >= 0.8).length / autoLabels.length : 0,
+            primary_categories: [...new Set(autoLabels.map((l) => l.category))].slice(0, 3),
+          },
           metadata: {
-            ...metadata,
+            ...metaData,
             researchContext: {
               isPakistaniEcommerce: isPakistaniSite,
               siteName: siteName || undefined,
               modelUsed: modelConfig.modelName,
-              analysisVersion: '2.1', // Updated to include Roman Urdu support
+              analysisVersion: '4.0',
+            },
+            agentLoop: {
+              steps: agentResult.agentSteps,
+              screenshotCount: agentResult.screenshotCount,
+              viewportCount: agentResult.viewports.length,
+              usedVision: agentResult.usedVision,
             },
           },
         };
@@ -1319,6 +1360,8 @@ export default function DatasetCollection() {
         cancelText: 'Cancel',
         onOk: async () => {
           setIsRecursiveCrawling(true);
+          setShowCrawlModal(true);
+          stopCrawlRef.current = false;
           setCrawlProgress({
             discovered: 0,
             visited: 0,
@@ -1334,13 +1377,12 @@ export default function DatasetCollection() {
           const maxPages = 10000; // Safety limit
           const delayBetweenPages = 2000; // 2 seconds between page visits
 
-          message.loading({
-            content: 'Starting full website crawl... This will take a while.',
-            key: 'recursive-crawl',
-            duration: 0,
-          });
-
           while (currentIndex < urlQueue.length && currentIndex < maxPages) {
+            if (stopCrawlRef.current) {
+              console.log('Recursive crawl stopped by user');
+              break;
+            }
+
             const currentUrl = urlQueue[currentIndex];
             const normalizedUrl = normalizeUrl(currentUrl);
 
@@ -1355,12 +1397,6 @@ export default function DatasetCollection() {
               visited: visitedUrls.size,
               queue: urlQueue.length - currentIndex,
               currentUrl: currentUrl,
-            });
-
-            message.loading({
-              content: `Crawling: ${visitedUrls.size} visited, ${allDiscoveredUrls.size} discovered, ${urlQueue.length - currentIndex} in queue\nCurrent: ${currentUrl.substring(0, 60)}...`,
-              key: 'recursive-crawl',
-              duration: 0,
             });
 
             try {
@@ -1527,14 +1563,16 @@ export default function DatasetCollection() {
             currentIndex++;
           }
 
-          message.destroy('recursive-crawl');
           setIsRecursiveCrawling(false);
+          setShowCrawlModal(false);
           setCrawlProgress(null);
 
           const finalUrls = Array.from(allDiscoveredUrls);
 
           Modal.success({
-            title: '✅ Full Website Crawl Complete!',
+            title: stopCrawlRef.current
+              ? '⏸️ Crawl Stopped Early'
+              : '✅ Full Website Crawl Complete!',
             width: 700,
             content: (
               <div style={{ marginTop: 16 }}>
@@ -1603,7 +1641,7 @@ export default function DatasetCollection() {
             okText: `Process All (${finalUrls.length})`,
             onOk: () => {
               setUrlQueue(finalUrls);
-              processUrlQueue();
+              processUrlQueue(finalUrls);
             },
           });
         },
@@ -1611,6 +1649,7 @@ export default function DatasetCollection() {
     } catch (error: any) {
       message.error(`Failed to start recursive crawl: ${error.message}`);
       setIsRecursiveCrawling(false);
+      setShowCrawlModal(false);
       setCrawlProgress(null);
     }
   };
@@ -1716,7 +1755,7 @@ export default function DatasetCollection() {
       cancelText: 'Cancel',
       onOk: () => {
         setUrlQueue(discovered);
-        processUrlQueue();
+        processUrlQueue(discovered);
       },
     });
   };
@@ -2085,6 +2124,65 @@ export default function DatasetCollection() {
         />
       )}
 
+      {/* Crawl Progress Modal */}
+      <Modal
+        title="🕷️ Auto Crawling Website..."
+        open={showCrawlModal}
+        closable={false}
+        maskClosable={false}
+        footer={[
+          <Button
+            key="stop"
+            danger
+            type="primary"
+            onClick={() => {
+              stopCrawlRef.current = true;
+              message.info('Stopping crawl... please wait for current page to finish.');
+            }}
+          >
+            Stop & Process Discovered Links
+          </Button>,
+        ]}
+      >
+        {crawlProgress ? (
+          <div>
+            <p>The extractor is currently exploring the website structure to discover relevant pages.</p>
+            <div style={{ background: '#f5f5f5', padding: '16px', borderRadius: '8px', marginTop: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontWeight: 500 }}>Pages Visited:</span>
+                <span style={{ color: '#1890ff', fontWeight: 'bold' }}>{crawlProgress.visited}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontWeight: 500 }}>Links Discovered:</span>
+                <span style={{ color: '#52c41a', fontWeight: 'bold' }}>{crawlProgress.discovered}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 500 }}>Remaining in Queue:</span>
+                <span>{crawlProgress.queue}</span>
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <p style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Currently processing:</p>
+              <div style={{ 
+                fontSize: '11px', 
+                background: '#fafafa', 
+                padding: '8px', 
+                border: '1px solid #e8e8e8',
+                borderRadius: '4px',
+                wordBreak: 'break-all',
+                maxHeight: '60px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }}>
+                {crawlProgress.currentUrl}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p>Initializing crawler...</p>
+        )}
+      </Modal>
+
       <div className="dataset-header">
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={6}>
@@ -2260,52 +2358,67 @@ export default function DatasetCollection() {
       </div>
 
       {crawlProgress && (
-        <Card style={{ marginBottom: 16, border: '2px solid #1890ff' }}>
+        <Card style={{ marginBottom: 16, border: '2px solid #ff4d4f', background: '#fff1f0' }}>
           <Space direction="vertical" style={{ width: '100%' }}>
-            <Text strong style={{ fontSize: '16px' }}>
-              🕷️ Full Website Crawl in Progress
-            </Text>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text strong style={{ fontSize: '16px' }}>
+                🕷️ Full Website Crawl in Progress...
+              </Text>
+              <Button
+                danger
+                type="primary"
+                size="large"
+                onClick={() => {
+                  stopCrawlRef.current = true;
+                  message.warning('⏸ Stopping after current page finishes — discovered links will be processed.');
+                }}
+                style={{ fontWeight: 'bold', fontSize: '14px' }}
+              >
+                ⏹ STOP & PROCESS NOW
+              </Button>
+            </div>
             <Row gutter={16}>
-              <Col span={6}>
+              <Col span={8}>
                 <Statistic
-                  title="Discovered"
+                  title="Links Discovered"
                   value={crawlProgress.discovered}
-                  valueStyle={{ color: '#1890ff' }}
+                  valueStyle={{ color: '#1890ff', fontSize: '28px' }}
                 />
               </Col>
-              <Col span={6}>
+              <Col span={8}>
                 <Statistic
-                  title="Visited"
+                  title="Pages Visited"
                   value={crawlProgress.visited}
-                  valueStyle={{ color: '#52c41a' }}
+                  valueStyle={{ color: '#52c41a', fontSize: '28px' }}
                 />
               </Col>
-              <Col span={6}>
+              <Col span={8}>
                 <Statistic
-                  title="In Queue"
+                  title="Remaining in Queue"
                   value={crawlProgress.queue}
-                  valueStyle={{ color: '#faad14' }}
+                  valueStyle={{ color: '#faad14', fontSize: '28px' }}
                 />
               </Col>
             </Row>
             <Text
               type="secondary"
-              style={{ fontSize: '12px', display: 'block', marginTop: 8 }}
+              style={{ fontSize: '12px', display: 'block', marginTop: 4 }}
             >
-              <strong>Current:</strong>{' '}
-              {crawlProgress.currentUrl.length > 80
-                ? `${crawlProgress.currentUrl.substring(0, 80)}...`
+              <strong>Currently crawling:</strong>{' '}
+              {crawlProgress.currentUrl.length > 90
+                ? `${crawlProgress.currentUrl.substring(0, 90)}...`
                 : crawlProgress.currentUrl}
             </Text>
             <Text
               type="secondary"
-              style={{ fontSize: '11px', display: 'block', marginTop: 4 }}
+              style={{ fontSize: '11px', display: 'block', color: '#ff4d4f' }}
             >
-              This may take 10-30 minutes. Please keep this window open.
+              ⚠️ Click "STOP & PROCESS NOW" at any time to halt crawling and immediately analyze all discovered links so far.
             </Text>
           </Space>
         </Card>
       )}
+
 
       {progress && (
         <Card style={{ marginBottom: 16 }}>
@@ -2440,15 +2553,15 @@ export default function DatasetCollection() {
                     {entry.verified_labels && (
                       <Tag color="green">Verified: {entry.verified_labels.filter((v) => v.verified).length}</Tag>
                     )}
-                    {entry.status === 'auto' && (
-                      <Button
-                        size="small"
-                        type="link"
-                        onClick={() => setReviewingEntry(entry)}
-                      >
-                        Review Labels
-                      </Button>
-                    )}
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<EditOutlined />}
+                      onClick={() => setReviewingEntry(entry)}
+                      style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    >
+                      ✏️ Manual Label
+                    </Button>
                   </Space>
                 </div>
               </Card>

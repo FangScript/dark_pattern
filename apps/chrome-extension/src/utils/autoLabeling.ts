@@ -10,6 +10,7 @@ import { getDebug } from '@darkpatternhunter/shared/logger';
 import type { ChatCompletionMessageParam } from 'openai/resources/index';
 import type { AutoLabel } from './datasetDB';
 import { getActiveModelConfig } from './aiConfig';
+import { getImageDimensions } from './coordinateUtils';
 
 const debug = getDebug('auto-labeling');
 
@@ -214,9 +215,14 @@ interface AutoLabelingResponse {
 }
 
 /**
- * Validate auto-label response
+ * Validate and heuristically fix auto-label responses (especially from LM Studio models)
  */
-function validateAutoLabel(label: AutoLabelingResponse['patterns'][0], modelName: string): AutoLabel | null {
+function validateAutoLabel(
+  label: AutoLabelingResponse['patterns'][0],
+  modelName: string,
+  imgWidth: number = 1920,
+  imgHeight: number = 1080,
+): AutoLabel | null {
   // Validate category
   const validCategory = DARK_PATTERN_TAXONOMY.find(
     (cat) => cat.toLowerCase() === label.category.toLowerCase()
@@ -233,14 +239,59 @@ function validateAutoLabel(label: AutoLabelingResponse['patterns'][0], modelName
     return null;
   }
 
-  const [x, y, width, height] = label.bbox;
+  let [x, y, width, height] = label.bbox;
+
+  // ── LM STUDIO HEURISTICS ──
+  
+  // Heuristic 1: Normalized [ymin, xmin, ymax, xmax] from 0-1000 (Very common in Qwen2.5-VL / LLaVA)
+  // If all coordinates are <= 1000 but the image is much larger, it's likely normalized.
+  // Note: Sometimes the prompt tricks it into Outputting [x, y, width, height] but STILL using the 0-1000 scale.
+  // We check if it looks like a bounding box format first:
+  const allUnder1000 = x <= 1000 && y <= 1000 && width <= 1000 && height <= 1000;
+  if (allUnder1000 && (imgWidth > 1200 || imgHeight > 1200)) {
+    // If width/height are actually xmax/ymax coords (they are larger than x/y)
+    if (width > x && height > y) {
+      // Is it [xmin, ymin, xmax, ymax] or [ymin, xmin, ymax, xmax]?
+      // Let's assume the prompt failed and it output [xmin, ymin, xmax, ymax] normalized to 1000
+      const xmin = (x / 1000) * imgWidth;
+      const ymin = (y / 1000) * imgHeight;
+      const xmax = (width / 1000) * imgWidth;
+      const ymax = (height / 1000) * imgHeight;
+      x = xmin;
+      y = ymin;
+      width = xmax - xmin;
+      height = ymax - ymin;
+    } else {
+      // It's [x, y, width, height] but normalized to 1000
+      x = (x / 1000) * imgWidth;
+      y = (y / 1000) * imgHeight;
+      width = (width / 1000) * imgWidth;
+      height = (height / 1000) * imgHeight;
+    }
+  }
+
+  // Heuristic 2: Absolute pixels but formatted as [xmin, ymin, xmax, ymax]
+  // In [x,y,w,h], width is a length. If the AI output an xmax coordinate instead, 
+  // 'width' would be an absolute coordinate near the right edge of the screen.
+  // Example: [100, 100, 1500, 800] -> xmax=1500 > imgWidth*0.5.
+  // If 'width' is extremely large AND larger than x, it's likely xmax.
+  if (width > x && height > y && width > imgWidth * 0.5 && x > 0) {
+    // If the difference creates a valid box, it was likely xmax/ymax
+    if (width <= imgWidth && height <= imgHeight) {
+      const xmax = width;
+      const ymax = height;
+      width = xmax - x;
+      height = ymax - y;
+    }
+  }
+
+  // Final sanity limits
+  x = Math.max(0, x);
+  y = Math.max(0, y);
+  width = Math.max(10, Math.min(width, imgWidth - x));
+  height = Math.max(10, Math.min(height, imgHeight - y));
+
   if (
-    typeof x !== 'number' ||
-    typeof y !== 'number' ||
-    typeof width !== 'number' ||
-    typeof height !== 'number' ||
-    x < 0 ||
-    y < 0 ||
     width <= 0 ||
     height <= 0
   ) {
@@ -457,10 +508,21 @@ If unsure, return fewer patterns rather than guessing.`,
 
     // Validate and filter labels
     const validatedLabels: AutoLabel[] = [];
-    
+    let imgWidth = 1920;
+    let imgHeight = 1080;
+    try {
+      if (screenshot) {
+        const dims = await getImageDimensions(screenshot);
+        imgWidth = dims.width;
+        imgHeight = dims.height;
+      }
+    } catch (e) {
+      debug('Failed to get screenshot dimensions for heuristic parsing', e);
+    }
+
     if (response.content.patterns && Array.isArray(response.content.patterns)) {
       for (const pattern of response.content.patterns) {
-        const validated = validateAutoLabel(pattern, usedModelName);
+        const validated = validateAutoLabel(pattern, usedModelName, imgWidth, imgHeight);
         if (validated) {
           validatedLabels.push(validated);
         }
