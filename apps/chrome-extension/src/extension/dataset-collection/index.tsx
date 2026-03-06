@@ -8,12 +8,9 @@ import {
   PlayCircleOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import {
-  AIActionType,
-  type AIArgs,
-  callAIWithObjectResponse,
-} from '@darkpatternhunter/core/ai-model';
-import type { IModelConfig } from '@darkpatternhunter/shared/env';
+// Note: AI calls are handled via runAgentLoop/autoLabeling.ts
+// Legacy imports (AIActionType, AIArgs, callAIWithObjectResponse, IModelConfig)
+// are kept for the analyzePageForDarkPatterns fallback function below.
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import { runAgentLoop, agentPatternsToAutoLabels, type ViewportCapture } from '../../utils/agentAnalysis';
 import {
@@ -294,19 +291,22 @@ export default function DatasetCollection() {
 
   const calculateStatistics = () => {
     const totalEntries = entries.length;
+    // FIX (Bug 2): Use getEffectivePatterns() which falls back to auto_labels
+    // when human-verified patterns (entry.patterns) are not yet set.
+    // Previously this always counted 0 for fresh AI scans.
     const totalPatterns = entries.reduce(
-      (sum, e) => sum + e.patterns.length,
+      (sum, e) => sum + getEffectivePatterns(e).length,
       0,
     );
     const sitesWithPatterns = entries.filter(
-      (e) => e.patterns.length > 0,
+      (e) => getEffectivePatterns(e).length > 0,
     ).length;
     const prevalenceRate =
       totalEntries > 0 ? (sitesWithPatterns / totalEntries) * 100 : 0;
 
     const categoryBreakdown: Record<string, number> = {};
     entries.forEach((entry) => {
-      entry.patterns.forEach((pattern) => {
+      getEffectivePatterns(entry).forEach((pattern) => {
         categoryBreakdown[pattern.type] =
           (categoryBreakdown[pattern.type] || 0) + 1;
       });
@@ -355,6 +355,7 @@ export default function DatasetCollection() {
   ): Promise<void> => {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
+      let resolved = false; // FIX (Bug 6): guard so 2s wait runs only ONCE
 
       const checkReady = async () => {
         try {
@@ -364,7 +365,9 @@ export default function DatasetCollection() {
           });
 
           if (results[0]?.result === 'complete') {
-            // Wait a bit more for dynamic content
+            if (resolved) return; // already resolving, skip
+            resolved = true;
+            // Wait a bit more for dynamic content (runs exactly once)
             await new Promise((r) => setTimeout(r, 2000));
             resolve();
             return;
@@ -989,28 +992,32 @@ export default function DatasetCollection() {
     await loadEntries();
   };
 
+  // FIX (Bug 8): Store textarea value in a ref instead of reading via
+  // document.getElementById — avoids crashes when modal unmounts first.
+  const batchUrlInputRef = React.useRef<string>('');
+
   const handleBatchProcess = () => {
+    batchUrlInputRef.current = '';
     Modal.confirm({
       title: 'Batch Process URLs',
       content: (
         <div>
           <p>Enter URLs to process (one per line):</p>
           <textarea
-            id="url-input"
             style={{
               width: '100%',
               minHeight: '200px',
               fontFamily: 'monospace',
             }}
-            placeholder="https://example.com&#10;https://example2.com"
+            placeholder={`https://example.com\nhttps://example2.com`}
+            onChange={(e) => { batchUrlInputRef.current = e.target.value; }}
           />
         </div>
       ),
       onOk: () => {
-        const input = document.getElementById(
-          'url-input',
-        ) as HTMLTextAreaElement;
-        const urls = input.value
+        // FIX (Bug 4b): Pass urls directly — setUrlQueue is async, processUrlQueue
+        // would otherwise read the old empty state on the same render.
+        const urls = batchUrlInputRef.current
           .split('\n')
           .map((u) => u.trim())
           .filter((u) => u?.startsWith('http'));
@@ -1021,7 +1028,7 @@ export default function DatasetCollection() {
         }
 
         setUrlQueue(urls);
-        processUrlQueue();
+        processUrlQueue(urls);
       },
     });
   };
@@ -1531,13 +1538,15 @@ export default function DatasetCollection() {
 
               const links = discoveredLinks[0]?.result || [];
 
-              // Add new links to queue
+              // FIX (Bug 5): Use allDiscoveredUrls.has() Set lookup (O(1))
+              // instead of urlQueue.includes() which is O(n), causing O(n²)
+              // performance on large crawls with 10,000+ URLs.
               for (const link of links) {
                 const normalized = normalizeUrl(link);
                 if (
                   shouldCrawlUrl(link, baseOrigin) &&
                   !visitedUrls.has(normalized) &&
-                  !urlQueue.includes(normalized)
+                  !allDiscoveredUrls.has(normalized)
                 ) {
                   urlQueue.push(normalized);
                   allDiscoveredUrls.add(normalized);

@@ -13,21 +13,28 @@ import { type BboxAnnotation, SEVERITY_COLORS } from '../../utils/bboxOverlay';
 import type { DarkPattern } from '../../utils/datasetDB';
 import './BboxEditor.less';
 
+// FIX (Bug 3): Use the SAME canonical 18-category taxonomy as autoLabeling.ts.
+// Previously this was a mismatched 14-label list which caused split class names
+// in YOLO/COCO exports (e.g. 'Roach Motel' vs 'Dead End/Roach Motel').
 const PATTERN_TYPES = [
   'Nagging',
-  'Dead End/Roach Motel',
-  'Price Comparison Prevention',
-  'Disguised Ad / Bait & Switch',
-  'Reference Pricing',
-  'False Hierarchy',
-  'Bundling / Auto-add / Bad Defaults',
-  'Pressured Selling / FOMO / Urgency',
   'Scarcity & Popularity',
+  'FOMO / Urgency',
+  'Reference Pricing',
+  'Disguised Ads',
+  'False Hierarchy',
+  'Interface Interference',
+  'Misdirection',
   'Hard To Close',
-  'Trick Questions / Confirmshaming',
+  'Obstruction',
+  'Bundling',
+  'Sneaking',
   'Hidden Information',
-  'Infinite Scrolling',
-  'Forced Ads / Autoplay',
+  'Subscription Trap',
+  'Roach Motel',
+  'Confirmshaming',
+  'Forced Registration',
+  'Gamification Pressure',
 ];
 
 const SEVERITY_OPTIONS = ['low', 'medium', 'high', 'critical'];
