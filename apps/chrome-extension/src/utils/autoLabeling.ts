@@ -10,6 +10,7 @@ import { getDebug } from '@darkpatternhunter/shared/logger';
 import type { ChatCompletionMessageParam } from 'openai/resources/index';
 import type { AutoLabel } from './datasetDB';
 import { getActiveModelConfig } from './aiConfig';
+import { executeWithRateLimit } from './rateLimiter';
 import { getImageDimensions } from './coordinateUtils';
 
 const debug = getDebug('auto-labeling');
@@ -401,10 +402,13 @@ Rules:
       },
     ];
 
-    const response = await callAIWithObjectResponse<AutoLabelingResponse>(
-      messages,
-      AIActionType.EXTRACT_DATA,
-      modelConfig,
+    const response = await executeWithRateLimit(
+      () => callAIWithObjectResponse<AutoLabelingResponse>(
+        messages,
+        AIActionType.EXTRACT_DATA,
+        modelConfig,
+      ),
+      { label: 'auto-labeling-vision' },
     );
 
     const validatedLabels: AutoLabel[] = [];
@@ -500,10 +504,13 @@ If unsure, return fewer patterns rather than guessing.`,
     ];
 
     // Call AI with retry logic
-    const response = await callAIWithObjectResponse<AutoLabelingResponse>(
-      messages,
-      AIActionType.EXTRACT_DATA,
-      modelConfig,
+    const response = await executeWithRateLimit(
+      () => callAIWithObjectResponse<AutoLabelingResponse>(
+        messages,
+        AIActionType.EXTRACT_DATA,
+        modelConfig,
+      ),
+      { label: 'auto-labeling-dom' },
     );
 
     // Validate and filter labels

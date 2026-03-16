@@ -1,8 +1,8 @@
 import Insight from '@darkpatternhunter/core';
 import type { BaseElement, Rect, UIContext } from '@darkpatternhunter/core';
 import type { RecordedEvent } from '@darkpatternhunter/recorder';
-import { globalModelConfigManager } from '@darkpatternhunter/shared/env';
 import { compositeElementInfoImg } from '@darkpatternhunter/shared/img';
+import { getActiveModelConfig } from './aiConfig';
 
 // Caches for element descriptions and boxed screenshots to improve performance
 const MAX_CACHE_SIZE = 100;
@@ -90,7 +90,7 @@ export const generateAIDescription = async (
     let lastError;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const modelConfig = globalModelConfigManager.getModelConfig('default');
+        const modelConfig = await getActiveModelConfig();
         return await insight.describe(rect, modelConfig);
       } catch (err) {
         lastError = err;

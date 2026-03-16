@@ -18,8 +18,8 @@ import {
   type AIConfig,
   getAIConfig,
   getActiveModelConfig,
-  isLocalServerReachable,
 } from '../../utils/aiConfig';
+import { executeWithRateLimit } from '../../utils/rateLimiter';
 import { getDarkPatternPrompt } from '../../utils/analysisEngine';
 import { captureTabScreenshot } from '../../utils/screenshotCapture';
 
@@ -219,12 +219,14 @@ IMPORTANT: Return a JSON object with the following structure:
       ];
 
       // Call AI with active model config
-      const response =
-        await callAIWithObjectResponse<LiveGuardDetectionResponse>(
+      const response = await executeWithRateLimit(
+        () => callAIWithObjectResponse<LiveGuardDetectionResponse>(
           messages,
           AIActionType.EXTRACT_DATA,
           modelConfig,
-        );
+        ),
+        { label: 'live-guard-scan' },
+      );
 
       // Add counter-measures to patterns if not provided
       const patternsWithCounterMeasures = response.content.patterns.map(

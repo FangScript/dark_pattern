@@ -10,10 +10,14 @@ const debug = getDebug('ai-config');
 // Storage keys for AI configuration
 export const AI_STORAGE_KEYS = {
   // Provider selection
-  AI_PROVIDER: 'aiProvider', // 'openai' | 'local'
+  AI_PROVIDER: 'aiProvider', // 'openai' | 'local' | 'openrouter'
 
   // OpenAI Configuration
   OPENAI_API_KEY: 'openaiApiKey',
+
+  // OpenRouter Configuration
+  OPENROUTER_API_KEY: 'openrouterApiKey',
+  OPENROUTER_MODEL: 'openrouterModel',
 
   // Local AI Configuration
   LOCAL_AI_ENABLED: 'localAiEnabled',
@@ -33,12 +37,14 @@ export const AI_DEFAULTS = {
 } as const;
 
 // Provider types
-export type AIProvider = 'openai' | 'local';
+export type AIProvider = 'openai' | 'local' | 'openrouter';
 
 // AI Configuration interface
 export interface AIConfig {
   provider: AIProvider;
   openaiApiKey?: string;
+  openrouterApiKey?: string;
+  openrouterModel?: string;
   localAiEnabled: boolean;
   localAiHost: string;
   selectedModel?: string;
@@ -63,6 +69,8 @@ export async function getAIConfig(): Promise<AIConfig> {
       [
         AI_STORAGE_KEYS.AI_PROVIDER,
         AI_STORAGE_KEYS.OPENAI_API_KEY,
+        AI_STORAGE_KEYS.OPENROUTER_API_KEY,
+        AI_STORAGE_KEYS.OPENROUTER_MODEL,
         AI_STORAGE_KEYS.LOCAL_AI_ENABLED,
         AI_STORAGE_KEYS.LOCAL_AI_HOST,
         AI_STORAGE_KEYS.SELECTED_MODEL,
@@ -77,6 +85,8 @@ export async function getAIConfig(): Promise<AIConfig> {
             (result[AI_STORAGE_KEYS.AI_PROVIDER] as AIProvider) ||
             AI_DEFAULTS.AI_PROVIDER,
           openaiApiKey: result[AI_STORAGE_KEYS.OPENAI_API_KEY],
+          openrouterApiKey: result[AI_STORAGE_KEYS.OPENROUTER_API_KEY],
+          openrouterModel: result[AI_STORAGE_KEYS.OPENROUTER_MODEL] || 'google/gemma-4-31b-it:free',
           localAiEnabled:
             result[AI_STORAGE_KEYS.LOCAL_AI_ENABLED] ||
             result[AI_STORAGE_KEYS.LEGACY_LOCAL_AI_ENABLED] ||
@@ -116,6 +126,12 @@ export async function saveAIConfig(config: Partial<AIConfig>): Promise<void> {
     }
     if (config.openaiApiKey !== undefined) {
       updates[AI_STORAGE_KEYS.OPENAI_API_KEY] = config.openaiApiKey;
+    }
+    if (config.openrouterApiKey !== undefined) {
+      updates[AI_STORAGE_KEYS.OPENROUTER_API_KEY] = config.openrouterApiKey;
+    }
+    if (config.openrouterModel !== undefined) {
+      updates[AI_STORAGE_KEYS.OPENROUTER_MODEL] = config.openrouterModel;
     }
     if (config.localAiEnabled !== undefined) {
       updates[AI_STORAGE_KEYS.LOCAL_AI_ENABLED] = config.localAiEnabled;
@@ -160,11 +176,10 @@ export async function getActiveModelConfig(): Promise<{
     config.localAiEnabled &&
     config.selectedModel
   ) {
-    // Use local LM Studio server
     return {
       modelName: config.selectedModel,
       openaiBaseURL: `${config.localAiHost}/v1`,
-      openaiApiKey: 'lm-studio', // Dummy API key for LM Studio
+      openaiApiKey: 'lm-studio',
       openaiExtraConfig: {
         dangerouslyAllowBrowser: true,
       },
@@ -174,15 +189,91 @@ export async function getActiveModelConfig(): Promise<{
     };
   }
 
-  // Use default OpenAI configuration
-  // This will be handled by the globalModelConfigManager
+  if (config.provider === 'openrouter' && config.openrouterApiKey) {
+    return {
+      modelName: config.openrouterModel || 'google/gemma-4-31b-it:free',
+      openaiBaseURL: 'https://openrouter.ai/api/v1',
+      openaiApiKey: config.openrouterApiKey,
+      openaiExtraConfig: {
+        dangerouslyAllowBrowser: true,
+        defaultHeaders: {
+          'HTTP-Referer': 'chrome-extension://dark-pattern-hunter',
+          'X-Title': 'Dark Pattern Hunter',
+        },
+      },
+      modelDescription: `OpenRouter: ${config.openrouterModel || 'google/gemma-4-31b-it:free'}`,
+      intent: 'VQA',
+      from: 'modelConfig',
+    };
+  }
+
   return {
-    modelName: 'gpt-4o', // Default fallback
+    modelName: 'gpt-4o',
     openaiApiKey: config.openaiApiKey || '',
     modelDescription: 'OpenAI GPT-4o',
     intent: 'VQA',
     from: 'modelConfig',
   };
+}
+
+/**
+ * Check if rate limiting should be applied for this provider/model
+ * Returns delay in ms (0 = no delay, >0 = delay between requests)
+ */
+export async function getRateLimitDelay(): Promise<number> {
+  const config = await getAIConfig();
+
+  // Local AI - no delay needed
+  if (config.provider === 'local') {
+    return 0;
+  }
+
+  // OpenAI - check if using free tier (no API key = free)
+  if (config.provider === 'openai' && !config.openaiApiKey?.startsWith('sk-')) {
+    return 0;
+  }
+
+  // OpenRouter free models - add delay to prevent rate limiting
+  if (config.provider === 'openrouter') {
+    const model = config.openrouterModel || '';
+    // Free models have strict rate limits
+    if (model.includes(':free')) {
+      // 3 second delay between requests for free tier
+      return 3000;
+    }
+    // Paid models - minimal delay
+    return 500;
+  }
+
+  // Default for OpenAI with API key - small delay just to be safe
+  if (config.provider === 'openai' && config.openaiApiKey) {
+    return 500;
+  }
+
+  return 0;
+}
+
+// Track last request time for rate limiting
+let lastRequestTime = 0;
+
+/**
+ * Wait appropriate delay based on provider/model, then update timestamp
+ * Call this before making AI requests
+ */
+export async function applyRateLimiting(): Promise<void> {
+  const delay = await getRateLimitDelay();
+  if (delay <= 0) return;
+
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+
+  if (timeSinceLastRequest < delay) {
+    const waitTime = delay - timeSinceLastRequest;
+    debug(`Rate limiting: waiting ${waitTime}ms before request`);
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+  }
+
+  lastRequestTime = Date.now();
 }
 
 /**

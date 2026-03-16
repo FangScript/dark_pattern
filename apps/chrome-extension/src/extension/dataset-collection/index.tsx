@@ -12,7 +12,16 @@ import {
 // Legacy imports (AIActionType, AIArgs, callAIWithObjectResponse, IModelConfig)
 // are kept for the analyzePageForDarkPatterns fallback function below.
 import { getDebug } from '@darkpatternhunter/shared/logger';
-import { runAgentLoop, agentPatternsToAutoLabels, type ViewportCapture } from '../../utils/agentAnalysis';
+import {
+  runAgentLoop,
+  agentPatternsToAutoLabels,
+  type ViewportCapture,
+} from '../../utils/agentAnalysis';
+import {
+  AIActionType,
+  callAIWithObjectResponse,
+  type AIArgs,
+} from '@darkpatternhunter/core/ai-model';
 import {
   Alert,
   Button,
@@ -37,7 +46,11 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import { useGlobalAIConfig } from '../../hooks/useGlobalAIConfig';
 import { getAIConfig, getActiveModelConfig } from '../../utils/aiConfig';
 import { drawBboxesOnImage } from '../../utils/bboxOverlay';
-import { buildFullPageCanvas, viewportToPageAbsolute, type ViewportCaptureWithDPR } from '../../utils/coordinateUtils';
+import {
+  buildFullPageCanvas,
+  viewportToPageAbsolute,
+  type ViewportCaptureWithDPR,
+} from '../../utils/coordinateUtils';
 import {
   exportAnnotatedImages,
   exportAsCOCO,
@@ -46,6 +59,7 @@ import {
 import {
   type DarkPattern,
   type DatasetEntry,
+  type DatasetEntryLite,
   clearDatasetEntries,
   deleteDatasetEntry,
   exportDatasetAsBundleZip,
@@ -53,6 +67,9 @@ import {
   exportForUITarsFineTuning,
   exportTextDatasetAsJSONL,
   getDatasetEntries,
+  getDatasetEntriesLite,
+  getDatasetEntryById,
+  getDatasetEntryCount,
   getEffectivePatterns,
   storeDatasetEntry,
 } from '../../utils/datasetDB';
@@ -88,7 +105,9 @@ function StitchedBboxEditor({
   onSave: (patterns: DarkPattern[]) => void;
   onCancel: () => void;
 }) {
-  const [stitchedScreenshot, setStitchedScreenshot] = useState<string | null>(null);
+  const [stitchedScreenshot, setStitchedScreenshot] = useState<string | null>(
+    null,
+  );
   const [absolutePatterns, setAbsolutePatterns] = useState<DarkPattern[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -100,16 +119,18 @@ function StitchedBboxEditor({
 
         if (viewportScreenshots && viewportScreenshots.length > 0) {
           // Build ViewportCaptureWithDPR array for stitching
-          const vpCaptures: ViewportCaptureWithDPR[] = viewportScreenshots.map((vs) => ({
-            screenshot: vs.screenshot,
-            patterns: vs.patterns || [],
-            viewportWidth: vs.viewportWidth,
-            viewportHeight: vs.viewportHeight,
-            scrollY: vs.scrollY,
-            devicePixelRatio: vs.devicePixelRatio ?? 1,
-            stepLabel: vs.stepLabel,
-            phase: vs.phase,
-          }));
+          const vpCaptures: ViewportCaptureWithDPR[] = viewportScreenshots.map(
+            (vs) => ({
+              screenshot: vs.screenshot,
+              patterns: vs.patterns || [],
+              viewportWidth: vs.viewportWidth,
+              viewportHeight: vs.viewportHeight,
+              scrollY: vs.scrollY,
+              devicePixelRatio: vs.devicePixelRatio ?? 1,
+              stepLabel: vs.stepLabel,
+              phase: vs.phase,
+            }),
+          );
 
           // Build stitched canvas WITHOUT drawing bboxes (BboxEditor will draw them)
           const stitched = await buildFullPageCanvas(vpCaptures, false);
@@ -123,7 +144,8 @@ function StitchedBboxEditor({
               const abs = viewportToPageAbsolute(p.bbox, vp);
               absPatterns.push({
                 type: p.category,
-                description: p.description || p.evidence || `${p.category} detected`,
+                description:
+                  p.description || p.evidence || `${p.category} detected`,
                 severity: (p.severity as DarkPattern['severity']) || 'medium',
                 location: p.location || '',
                 evidence: p.evidence || '',
@@ -151,7 +173,18 @@ function StitchedBboxEditor({
   }, [entry]);
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><Spin tip="Stitching viewport screenshots..." /></div>;
+    return (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100%',
+        }}
+      >
+        <Spin tip="Stitching viewport screenshots..." />
+      </div>
+    );
   }
 
   if (!stitchedScreenshot) {
@@ -238,9 +271,12 @@ OUTPUT REQUIREMENT: Return ONLY valid JSON with this exact structure:
 Return ONLY valid JSON. No explanations, no markdown, just the JSON object.`;
 
 export default function DatasetCollection() {
-  const [entries, setEntries] = useState<DatasetEntry[]>([]);
+  const [entries, setEntries] = useState<DatasetEntryLite[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [exportingBundle, setExportingBundle] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const PAGE_SIZE = 20;
   const [progress, setProgress] = useState<{
     current: number;
     total: number;
@@ -251,7 +287,9 @@ export default function DatasetCollection() {
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
   const [filterPattern, setFilterPattern] = useState<string>('ALL');
   const [isRecursiveCrawling, setIsRecursiveCrawling] = useState(false);
-  const [reviewingEntry, setReviewingEntry] = useState<DatasetEntry | null>(null);
+  const [reviewingEntry, setReviewingEntry] = useState<DatasetEntry | null>(
+    null,
+  );
   const [crawlProgress, setCrawlProgress] = useState<{
     discovered: number;
     visited: number;
@@ -291,16 +329,8 @@ export default function DatasetCollection() {
 
   const calculateStatistics = () => {
     const totalEntries = entries.length;
-    // FIX (Bug 2): Use getEffectivePatterns() which falls back to auto_labels
-    // when human-verified patterns (entry.patterns) are not yet set.
-    // Previously this always counted 0 for fresh AI scans.
-    const totalPatterns = entries.reduce(
-      (sum, e) => sum + getEffectivePatterns(e).length,
-      0,
-    );
-    const sitesWithPatterns = entries.filter(
-      (e) => getEffectivePatterns(e).length > 0,
-    ).length;
+    const totalPatterns = entries.reduce((sum, e) => sum + e.patternCount, 0);
+    const sitesWithPatterns = entries.filter((e) => e.patternCount > 0).length;
     const prevalenceRate =
       totalEntries > 0 ? (sitesWithPatterns / totalEntries) * 100 : 0;
 
@@ -327,13 +357,31 @@ export default function DatasetCollection() {
 
   const loadEntries = async () => {
     try {
-      const data = await getDatasetEntries();
-      // Sort by timestamp descending
+      const count = await getDatasetEntryCount();
+      setTotalEntries(count);
+      const data = await getDatasetEntriesLite(
+        PAGE_SIZE,
+        currentPage * PAGE_SIZE,
+      );
       data.sort((a, b) => b.timestamp - a.timestamp);
       setEntries(data);
     } catch (error) {
       console.error('Failed to load entries:', error);
       message.error('Failed to load dataset entries');
+    }
+  };
+
+  const loadMoreEntries = async () => {
+    try {
+      const nextPage = currentPage + 1;
+      const moreData = await getDatasetEntriesLite(
+        PAGE_SIZE,
+        nextPage * PAGE_SIZE,
+      );
+      setEntries((prev) => [...prev, ...moreData]);
+      setCurrentPage(nextPage);
+    } catch (error) {
+      console.error('Failed to load more entries:', error);
     }
   };
 
@@ -745,7 +793,9 @@ export default function DatasetCollection() {
         phase: v.phase,
       }));
 
-      console.log(`[performAnalysis] Storing ${viewportScreenshots.length} viewport screenshots (${viewportScreenshots.filter(v => v.patterns.length > 0).length} with patterns)`);
+      console.log(
+        `[performAnalysis] Storing ${viewportScreenshots.length} viewport screenshots (${viewportScreenshots.filter((v) => v.patterns.length > 0).length} with patterns)`,
+      );
 
       // Create dataset entry with ALL viewport screenshots
       const entry: DatasetEntry = {
@@ -761,7 +811,10 @@ export default function DatasetCollection() {
         viewport_screenshots: viewportScreenshots, // <-- ALL viewports stored here
         summary: {
           total_patterns: autoLabels.length,
-          prevalence_score: autoLabels.length > 0 ? highConfidenceLabels.length / autoLabels.length : 0,
+          prevalence_score:
+            autoLabels.length > 0
+              ? highConfidenceLabels.length / autoLabels.length
+              : 0,
           primary_categories: [
             ...new Set(autoLabels.map((l) => l.category)),
           ].slice(0, 3),
@@ -789,8 +842,12 @@ export default function DatasetCollection() {
 
       // Show success message with phase-based breakdown
       if (autoLabels.length > 0) {
-        const scanViewports = agentResult.viewports.filter(v => v.phase === 'scan').length;
-        const interactViewports = agentResult.viewports.filter(v => v.phase === 'interact').length;
+        const scanViewports = agentResult.viewports.filter(
+          (v) => v.phase === 'scan',
+        ).length;
+        const interactViewports = agentResult.viewports.filter(
+          (v) => v.phase === 'interact',
+        ).length;
         message.success({
           content: `Analysis complete! ${autoLabels.length} patterns found across ${scanViewports} page sections + ${interactViewports} interactions. (${highConfidenceLabels.length} high, ${mediumConfidenceLabels.length} medium confidence)`,
           duration: 7,
@@ -863,12 +920,15 @@ export default function DatasetCollection() {
           prev ? { ...prev, status: 'Opening page...' } : null,
         );
 
-        // Open URL in new tab
-        tab = await chrome.tabs.create({ url, active: false });
+        // Open URL in new tab and ensure it gets focus
+        tab = await chrome.tabs.create({ url, active: true });
 
-        if (!tab.id) {
+        if (!tab.id || !tab.windowId) {
           throw new Error('Failed to create tab');
         }
+
+        // Must bring window to front for viewport screenshots to work
+        await chrome.windows.update(tab.windowId, { focused: true });
 
         setProgress((prev) =>
           prev ? { ...prev, status: 'Waiting for page to load...' } : null,
@@ -882,23 +942,29 @@ export default function DatasetCollection() {
         );
 
         // Capture initial screenshot as fallback + get metadata
-        const { screenshot, dom: domInit, metadata: metaInit } = await capturePageData(tab.id);
+        const {
+          screenshot,
+          dom: domInit,
+          metadata: metaInit,
+        } = await capturePageData(tab.id);
         const isPakistaniSite = isPakistaniEcommerceSite(url);
         const siteName = getSiteName(url);
 
         setProgress((prev) =>
-          prev ? { ...prev, status: 'Scanning all viewports with AI...' } : null,
+          prev
+            ? { ...prev, status: 'Scanning all viewports with AI...' }
+            : null,
         );
 
         // Use the same phased agent loop as "Analyze Current Page"
         // This scrolls the full page and captures every viewport
         const agentResult = await runAgentLoop(tab.id!, (msg) => {
-          setProgress((prev) =>
-            prev ? { ...prev, status: msg } : null,
-          );
+          setProgress((prev) => (prev ? { ...prev, status: msg } : null));
         });
 
-        const autoLabels = await agentPatternsToAutoLabels(agentResult.patterns);
+        const autoLabels = await agentPatternsToAutoLabels(
+          agentResult.patterns,
+        );
 
         // Use first viewport screenshot as the thumbnail
         let screenshotForEntry: string = screenshot; // fallback
@@ -906,8 +972,9 @@ export default function DatasetCollection() {
           screenshotForEntry = agentResult.viewports[0].screenshot;
         }
 
-        const { dom: domData, metadata: metaData } = await capturePageData(tab.id);
-
+        const { dom: domData, metadata: metaData } = await capturePageData(
+          tab.id,
+        );
 
         // Store all viewport screenshots just like performAnalysis
         const viewportScreenshots = agentResult.viewports.map((v) => ({
@@ -934,8 +1001,14 @@ export default function DatasetCollection() {
           viewport_screenshots: viewportScreenshots,
           summary: {
             total_patterns: autoLabels.length,
-            prevalence_score: autoLabels.length > 0 ? autoLabels.filter(l => l.confidence >= 0.8).length / autoLabels.length : 0,
-            primary_categories: [...new Set(autoLabels.map((l) => l.category))].slice(0, 3),
+            prevalence_score:
+              autoLabels.length > 0
+                ? autoLabels.filter((l) => l.confidence >= 0.8).length /
+                  autoLabels.length
+                : 0,
+            primary_categories: [
+              ...new Set(autoLabels.map((l) => l.category)),
+            ].slice(0, 3),
           },
           metadata: {
             ...metaData,
@@ -1009,8 +1082,10 @@ export default function DatasetCollection() {
               minHeight: '200px',
               fontFamily: 'monospace',
             }}
-            placeholder={`https://example.com\nhttps://example2.com`}
-            onChange={(e) => { batchUrlInputRef.current = e.target.value; }}
+            placeholder="https://example.com\nhttps://example2.com"
+            onChange={(e) => {
+              batchUrlInputRef.current = e.target.value;
+            }}
           />
         </div>
       ),
@@ -1790,7 +1865,13 @@ export default function DatasetCollection() {
 
   const handleExport = async () => {
     try {
-      const jsonData = await exportDatasetAsJSON(2);
+      // Fetch full entries for visible entries only (to avoid memory issues)
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const jsonData = await exportDatasetAsJSON(2, validEntries);
       const filename = `dark-patterns-dataset-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
 
       // Direct download from popup to avoid message size limits
@@ -1807,7 +1888,13 @@ export default function DatasetCollection() {
 
   const handleExportTextOnly = async () => {
     try {
-      const jsonlData = await exportTextDatasetAsJSONL();
+      // Fetch full entries for visible entries only
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const jsonlData = await exportTextDatasetAsJSONL(validEntries);
       if (!jsonlData.trim()) {
         message.warning('No patterns found to export in text dataset');
         return;
@@ -1837,7 +1924,13 @@ export default function DatasetCollection() {
 
     setExportingBundle(true);
     try {
-      const bundleBlob = await exportDatasetAsBundleZip();
+      // Fetch full entries for visible entries only
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const bundleBlob = await exportDatasetAsBundleZip(validEntries);
       const filename = `dark-patterns-dataset-${dayjs().format('YYYY-MM-DD-HHmmss')}.zip`;
       const blobUrl = URL.createObjectURL(bundleBlob);
 
@@ -1876,9 +1969,15 @@ export default function DatasetCollection() {
       return;
     }
 
+    // Fetch full entries for visible entries only
+    const fullEntries = await Promise.all(
+      entries.map((e) => getDatasetEntryById(e.id)),
+    );
+    const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
     // Check if entries have bounding boxes
-    const entriesWithBbox = entries.filter((e) =>
-      e.patterns.some((p) => p.bbox && p.bbox.length === 4),
+    const entriesWithBbox = validEntries.filter((e) =>
+      getEffectivePatterns(e).some((p) => p.bbox && p.bbox.length === 4),
     );
 
     if (entriesWithBbox.length === 0) {
@@ -1892,7 +1991,7 @@ export default function DatasetCollection() {
 
     setExportingBundle(true);
     try {
-      const uitarsBlob = await exportForUITarsFineTuning();
+      const uitarsBlob = await exportForUITarsFineTuning(validEntries);
       const filename = `ui-tars-training-dataset-${dayjs().format('YYYY-MM-DD-HHmmss')}.zip`;
       const blobUrl = URL.createObjectURL(uitarsBlob);
 
@@ -1958,7 +2057,13 @@ export default function DatasetCollection() {
   const handleExportCOCO = async () => {
     setExportingBundle(true);
     try {
-      const blob = await exportAsCOCO();
+      // Fetch full entries for visible entries only
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const blob = await exportAsCOCO(validEntries);
       const filename = `dark-patterns-coco-${dayjs().format('YYYY-MM-DD-HHmmss')}.zip`;
       const blobUrl = URL.createObjectURL(blob);
       chrome.downloads.download(
@@ -1987,7 +2092,13 @@ export default function DatasetCollection() {
   const handleExportYOLO = async () => {
     setExportingBundle(true);
     try {
-      const blob = await exportAsYOLO();
+      // Fetch full entries for visible entries only
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const blob = await exportAsYOLO(validEntries);
       const filename = `dark-patterns-yolo-${dayjs().format('YYYY-MM-DD-HHmmss')}.zip`;
       const blobUrl = URL.createObjectURL(blob);
       chrome.downloads.download(
@@ -2016,7 +2127,13 @@ export default function DatasetCollection() {
   const handleExportAnnotatedImages = async () => {
     setExportingBundle(true);
     try {
-      const blob = await exportAnnotatedImages();
+      // Fetch full entries for visible entries only
+      const fullEntries = await Promise.all(
+        entries.map((e) => getDatasetEntryById(e.id)),
+      );
+      const validEntries = fullEntries.filter((e): e is DatasetEntry => e !== null);
+
+      const blob = await exportAnnotatedImages(validEntries);
       const filename = `dark-patterns-annotated-${dayjs().format('YYYY-MM-DD-HHmmss')}.zip`;
       const blobUrl = URL.createObjectURL(blob);
       chrome.downloads.download(
@@ -2041,14 +2158,39 @@ export default function DatasetCollection() {
     }
   };
 
-  // Open bbox editor for an entry
-  const handleEditBboxes = (entry: DatasetEntry) => {
-    if (!entry.screenshot) {
-      message.error('No screenshot available for this entry');
-      return;
+  // Open review panel — loads full entry on demand
+  const handleOpenReview = async (liteEntry: DatasetEntryLite) => {
+    try {
+      const fullEntry = await getDatasetEntryById(liteEntry.id);
+      if (!fullEntry) {
+        message.error('Entry not found in database');
+        return;
+      }
+      setReviewingEntry(fullEntry);
+    } catch (error) {
+      console.error('Failed to load full entry:', error);
+      message.error('Failed to load entry data');
     }
-    setEditingEntry(entry);
-    setShowBboxEditor(true);
+  };
+
+  // Open bbox editor for an entry — loads full entry on demand
+  const handleEditBboxes = async (liteEntry: DatasetEntryLite) => {
+    try {
+      const fullEntry = await getDatasetEntryById(liteEntry.id);
+      if (!fullEntry) {
+        message.error('Entry not found in database');
+        return;
+      }
+      if (!fullEntry.screenshot && !fullEntry.viewport_screenshots) {
+        message.error('No screenshot available for this entry');
+        return;
+      }
+      setEditingEntry(fullEntry);
+      setShowBboxEditor(true);
+    } catch (error) {
+      console.error('Failed to load full entry:', error);
+      message.error('Failed to load entry data');
+    }
   };
 
   // Save bbox edits
@@ -2146,7 +2288,9 @@ export default function DatasetCollection() {
             type="primary"
             onClick={() => {
               stopCrawlRef.current = true;
-              message.info('Stopping crawl... please wait for current page to finish.');
+              message.info(
+                'Stopping crawl... please wait for current page to finish.',
+              );
             }}
           >
             Stop & Process Discovered Links
@@ -2155,15 +2299,41 @@ export default function DatasetCollection() {
       >
         {crawlProgress ? (
           <div>
-            <p>The extractor is currently exploring the website structure to discover relevant pages.</p>
-            <div style={{ background: '#f5f5f5', padding: '16px', borderRadius: '8px', marginTop: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <p>
+              The extractor is currently exploring the website structure to
+              discover relevant pages.
+            </p>
+            <div
+              style={{
+                background: '#f5f5f5',
+                padding: '16px',
+                borderRadius: '8px',
+                marginTop: '16px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                }}
+              >
                 <span style={{ fontWeight: 500 }}>Pages Visited:</span>
-                <span style={{ color: '#1890ff', fontWeight: 'bold' }}>{crawlProgress.visited}</span>
+                <span style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                  {crawlProgress.visited}
+                </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                }}
+              >
                 <span style={{ fontWeight: 500 }}>Links Discovered:</span>
-                <span style={{ color: '#52c41a', fontWeight: 'bold' }}>{crawlProgress.discovered}</span>
+                <span style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                  {crawlProgress.discovered}
+                </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ fontWeight: 500 }}>Remaining in Queue:</span>
@@ -2171,18 +2341,24 @@ export default function DatasetCollection() {
               </div>
             </div>
             <div style={{ marginTop: '16px' }}>
-              <p style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Currently processing:</p>
-              <div style={{ 
-                fontSize: '11px', 
-                background: '#fafafa', 
-                padding: '8px', 
-                border: '1px solid #e8e8e8',
-                borderRadius: '4px',
-                wordBreak: 'break-all',
-                maxHeight: '60px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis'
-              }}>
+              <p
+                style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}
+              >
+                Currently processing:
+              </p>
+              <div
+                style={{
+                  fontSize: '11px',
+                  background: '#fafafa',
+                  padding: '8px',
+                  border: '1px solid #e8e8e8',
+                  borderRadius: '4px',
+                  wordBreak: 'break-all',
+                  maxHeight: '60px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {crawlProgress.currentUrl}
               </div>
             </div>
@@ -2261,6 +2437,14 @@ export default function DatasetCollection() {
           </Col>
         </Row>
 
+        <Alert
+          message="Export Behavior"
+          description={`Exports only currently loaded entries (${entries.length} of ${totalEntries} total). Click "Load More" to load additional entries before exporting, or export in multiple batches.`}
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+        />
+
         <Space wrap>
           <Button
             type="primary"
@@ -2293,23 +2477,26 @@ export default function DatasetCollection() {
             icon={<DownloadOutlined />}
             onClick={handleExport}
             disabled={entries.length === 0}
+            title={`Export ${entries.length} loaded entries (${totalEntries} total in database)`}
           >
-            Export JSON (Full)
+            Export JSON ({entries.length} entries)
           </Button>
           <Button
             icon={<DownloadOutlined />}
             onClick={handleExportTextOnly}
             disabled={entries.length === 0}
+            title={`Export ${entries.length} loaded entries as text dataset`}
           >
-            Export Text Dataset (JSONL)
+            Export Text ({entries.length} entries)
           </Button>
           <Button
             icon={<DownloadOutlined />}
             onClick={handleExportBundle}
             loading={exportingBundle}
             disabled={entries.length === 0}
+            title={`Export ${entries.length} loaded entries as ZIP bundle`}
           >
-            Export Bundle (ZIP)
+            Export ZIP ({entries.length} entries)
           </Button>
           <Button
             type="primary"
@@ -2318,8 +2505,9 @@ export default function DatasetCollection() {
             loading={exportingBundle}
             disabled={entries.length === 0}
             style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+            title={`Export ${entries.length} loaded entries in UI-TARS format`}
           >
-            Export UI-TARS Format
+            Export UI-TARS ({entries.length} entries)
           </Button>
           <Button
             icon={<DownloadOutlined />}
@@ -2331,8 +2519,9 @@ export default function DatasetCollection() {
               borderColor: '#722ed1',
               color: '#fff',
             }}
+            title={`Export ${entries.length} loaded entries in COCO format`}
           >
-            Export COCO Format
+            Export COCO ({entries.length} entries)
           </Button>
           <Button
             icon={<DownloadOutlined />}
@@ -2344,16 +2533,18 @@ export default function DatasetCollection() {
               borderColor: '#eb2f96',
               color: '#fff',
             }}
+            title={`Export ${entries.length} loaded entries in YOLO format`}
           >
-            Export YOLO Format
+            Export YOLO ({entries.length} entries)
           </Button>
           <Button
             icon={<EyeOutlined />}
             onClick={handleExportAnnotatedImages}
             loading={exportingBundle}
             disabled={entries.length === 0}
+            title={`Export annotated images for ${entries.length} loaded entries`}
           >
-            Export Annotated Images
+            Export Images ({entries.length} entries)
           </Button>
           <Button
             danger
@@ -2367,9 +2558,21 @@ export default function DatasetCollection() {
       </div>
 
       {crawlProgress && (
-        <Card style={{ marginBottom: 16, border: '2px solid #ff4d4f', background: '#fff1f0' }}>
+        <Card
+          style={{
+            marginBottom: 16,
+            border: '2px solid #ff4d4f',
+            background: '#fff1f0',
+          }}
+        >
           <Space direction="vertical" style={{ width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
               <Text strong style={{ fontSize: '16px' }}>
                 🕷️ Full Website Crawl in Progress...
               </Text>
@@ -2379,7 +2582,9 @@ export default function DatasetCollection() {
                 size="large"
                 onClick={() => {
                   stopCrawlRef.current = true;
-                  message.warning('⏸ Stopping after current page finishes — discovered links will be processed.');
+                  message.warning(
+                    '⏸ Stopping after current page finishes — discovered links will be processed.',
+                  );
                 }}
                 style={{ fontWeight: 'bold', fontSize: '14px' }}
               >
@@ -2422,12 +2627,12 @@ export default function DatasetCollection() {
               type="secondary"
               style={{ fontSize: '11px', display: 'block', color: '#ff4d4f' }}
             >
-              ⚠️ Click "STOP & PROCESS NOW" at any time to halt crawling and immediately analyze all discovered links so far.
+              ⚠️ Click "STOP & PROCESS NOW" at any time to halt crawling and
+              immediately analyze all discovered links so far.
             </Text>
           </Space>
         </Card>
       )}
-
 
       {progress && (
         <Card style={{ marginBottom: 16 }}>
@@ -2499,74 +2704,86 @@ export default function DatasetCollection() {
                   ) : (
                     <div className="patterns-list">
                       {effectivePatterns.map((pattern, idx) => (
-                      <Card
-                        key={idx}
-                        size="small"
-                        style={{ marginTop: 8 }}
-                        title={
-                          <Space>
-                            <Tag color={getSeverityColor(pattern.severity)}>
-                              {pattern.severity?.toUpperCase() || 'UNKNOWN'}
-                            </Tag>
-                            <Text strong>{pattern.type}</Text>
-                          </Space>
-                        }
-                      >
-                        {/* Image display removed for Text-First strategy */}
+                        <Card
+                          key={idx}
+                          size="small"
+                          style={{ marginTop: 8 }}
+                          title={
+                            <Space>
+                              <Tag color={getSeverityColor(pattern.severity)}>
+                                {pattern.severity?.toUpperCase() || 'UNKNOWN'}
+                              </Tag>
+                              <Text strong>{pattern.type}</Text>
+                            </Space>
+                          }
+                        >
+                          {/* Image display removed for Text-First strategy */}
 
-                        <Paragraph style={{ margin: 0 }}>
-                          <Text strong>Location: </Text>
-                          {pattern.location}
-                        </Paragraph>
-                        <Paragraph style={{ margin: '4px 0' }}>
-                          <Text strong>Description: </Text>
-                          {pattern.description}
-                        </Paragraph>
-                        <Paragraph style={{ margin: 0 }}>
-                          <Text strong>Evidence: </Text>
-                          <Text code>{pattern.evidence}</Text>
-                        </Paragraph>
-                        {pattern.confidence !== undefined && (
-                          <Text
-                            type="secondary"
-                            style={{ fontSize: '12px', display: 'block' }}
-                          >
-                            Confidence: {(pattern.confidence * 100).toFixed(0)}%
-                          </Text>
-                        )}
-                        {pattern.bbox && pattern.bbox.length === 4 && (
-                          <Text
-                            type="secondary"
-                            style={{
-                              fontSize: '12px',
-                              display: 'block',
-                              marginTop: 4,
-                            }}
-                          >
-                            Bounding Box: [{pattern.bbox.join(', ')}]
-                          </Text>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
+                          <Paragraph style={{ margin: 0 }}>
+                            <Text strong>Location: </Text>
+                            {pattern.location}
+                          </Paragraph>
+                          <Paragraph style={{ margin: '4px 0' }}>
+                            <Text strong>Description: </Text>
+                            {pattern.description}
+                          </Paragraph>
+                          <Paragraph style={{ margin: 0 }}>
+                            <Text strong>Evidence: </Text>
+                            <Text code>{pattern.evidence}</Text>
+                          </Paragraph>
+                          {pattern.confidence !== undefined && (
+                            <Text
+                              type="secondary"
+                              style={{ fontSize: '12px', display: 'block' }}
+                            >
+                              Confidence:{' '}
+                              {(pattern.confidence * 100).toFixed(0)}%
+                            </Text>
+                          )}
+                          {pattern.bbox && pattern.bbox.length === 4 && (
+                            <Text
+                              type="secondary"
+                              style={{
+                                fontSize: '12px',
+                                display: 'block',
+                                marginTop: 4,
+                              }}
+                            >
+                              Bounding Box: [{pattern.bbox.join(', ')}]
+                            </Text>
+                          )}
+                        </Card>
+                      ))}
+                    </div>
                   );
                 })()}
                 <div style={{ marginTop: 8 }}>
                   <Space>
-                    <Tag color={entry.status === 'verified' ? 'green' : entry.status === 'auto' ? 'blue' : 'default'}>
+                    <Tag
+                      color={
+                        entry.status === 'verified'
+                          ? 'green'
+                          : entry.status === 'auto'
+                            ? 'blue'
+                            : 'default'
+                      }
+                    >
                       Status: {entry.status || 'raw'}
                     </Tag>
                     {entry.auto_labels && (
                       <Tag>Auto: {entry.auto_labels.length}</Tag>
                     )}
                     {entry.verified_labels && (
-                      <Tag color="green">Verified: {entry.verified_labels.filter((v) => v.verified).length}</Tag>
+                      <Tag color="green">
+                        Verified:{' '}
+                        {entry.verified_labels.filter((v) => v.verified).length}
+                      </Tag>
                     )}
                     <Button
                       size="small"
                       type="primary"
                       icon={<EditOutlined />}
-                      onClick={() => setReviewingEntry(entry)}
+                      onClick={() => handleOpenReview(entry)}
                       style={{ background: '#722ed1', borderColor: '#722ed1' }}
                     >
                       ✏️ Manual Label
@@ -2578,6 +2795,15 @@ export default function DatasetCollection() {
           )}
         />
       )}
+
+      {entries.length < totalEntries && (
+        <div style={{ textAlign: 'center', padding: '16px 0' }}>
+          <Button onClick={loadMoreEntries}>
+            Load More ({totalEntries - entries.length} remaining)
+          </Button>
+        </div>
+      )}
+
       {/* Label Review Panel */}
       {reviewingEntry && (
         <Modal
@@ -2606,30 +2832,32 @@ export default function DatasetCollection() {
         </Modal>
       )}
 
-      {showBboxEditor && editingEntry && (editingEntry.screenshot || editingEntry.viewport_screenshots) && (
-        <Modal
-          title="Edit Bounding Boxes"
-          open={true}
-          onCancel={() => {
-            setShowBboxEditor(false);
-            setEditingEntry(null);
-          }}
-          footer={null}
-          width="90%"
-          style={{ top: 20 }}
-          bodyStyle={{ height: '80vh', padding: 0 }}
-          destroyOnClose
-        >
-          <StitchedBboxEditor
-            entry={editingEntry}
-            onSave={handleSaveBboxEdits}
+      {showBboxEditor &&
+        editingEntry &&
+        (editingEntry.screenshot || editingEntry.viewport_screenshots) && (
+          <Modal
+            title="Edit Bounding Boxes"
+            open={true}
             onCancel={() => {
               setShowBboxEditor(false);
               setEditingEntry(null);
             }}
-          />
-        </Modal>
-      )}
+            footer={null}
+            width="90%"
+            style={{ top: 20 }}
+            bodyStyle={{ height: '80vh', padding: 0 }}
+            destroyOnClose
+          >
+            <StitchedBboxEditor
+              entry={editingEntry}
+              onSave={handleSaveBboxEdits}
+              onCancel={() => {
+                setShowBboxEditor(false);
+                setEditingEntry(null);
+              }}
+            />
+          </Modal>
+        )}
     </div>
   );
 }

@@ -57,13 +57,13 @@ export interface DatasetEntry {
   // Each viewport = one training image for YOLO dataset.
   // Patterns in each viewport have bboxes RELATIVE to that screenshot.
   viewport_screenshots?: Array<{
-    screenshot: string;           // base64 data URL
-    patterns: AutoLabel[];        // patterns with bboxes relative to THIS screenshot (device pixels)
-    viewportWidth: number;        // CSS pixels
-    viewportHeight: number;       // CSS pixels
-    scrollY: number;              // CSS pixels — page scroll offset when captured
-    devicePixelRatio: number;     // DPR at capture time
-    stepLabel: string;            // "scan-0", "scan-1", "interact-expand", etc.
+    screenshot: string; // base64 data URL
+    patterns: AutoLabel[]; // patterns with bboxes relative to THIS screenshot (device pixels)
+    viewportWidth: number; // CSS pixels
+    viewportHeight: number; // CSS pixels
+    scrollY: number; // CSS pixels — page scroll offset when captured
+    devicePixelRatio: number; // DPR at capture time
+    stepLabel: string; // "scan-0", "scan-1", "interact-expand", etc.
     phase: 'scan' | 'interact';
   }>;
   metadata?: {
@@ -147,7 +147,118 @@ const datasetDbManager = new IndexedDBManager(DB_NAME, DB_VERSION, [
   { name: DATASET_ENTRIES_STORE, keyPath: 'id' },
 ]);
 
-// Get all dataset entries from IndexedDB
+// ── LITE ENTRY (no screenshots, no DOM, no viewport_screenshots) ─────
+export interface DatasetEntryLite {
+  id: string;
+  url: string;
+  timestamp: number;
+  status: DatasetStatus;
+  patterns: DarkPattern[];
+  auto_labels?: AutoLabel[];
+  verified_labels?: VerifiedLabel[];
+  summary?: {
+    total_patterns: number;
+    prevalence_score: number;
+    primary_categories: string[];
+  };
+  metadata?: {
+    pageTitle?: string;
+    viewport?: { width: number; height: number };
+    researchContext?: {
+      isPakistaniEcommerce?: boolean;
+      siteName?: string;
+      modelUsed?: string;
+    };
+  };
+  patternCount: number;
+  viewportCount: number;
+  hasScreenshot: boolean;
+}
+
+const getEffectivePatternsCount = (entry: IndexedDBDatasetEntry): number => {
+  if (entry.verified_labels && entry.verified_labels.length > 0) {
+    return entry.verified_labels.filter((v) => v.verified).length;
+  }
+  if (entry.auto_labels && entry.auto_labels.length > 0) {
+    return entry.auto_labels.length;
+  }
+  return entry.patterns?.length ?? 0;
+};
+
+export const getDatasetEntriesLite = async (
+  limit?: number,
+  offset?: number,
+): Promise<DatasetEntryLite[]> => {
+  return (
+    (await withErrorHandling(
+      async () => {
+        const entries = await datasetDbManager.getAll<IndexedDBDatasetEntry>(
+          DATASET_ENTRIES_STORE,
+          true,
+        );
+
+        entries.sort((a, b) => b.timestamp - a.timestamp);
+
+        const sliced =
+          limit !== undefined
+            ? entries.slice(offset ?? 0, (offset ?? 0) + limit)
+            : entries;
+
+        return sliced.map((entry) => ({
+          id: entry.id,
+          url: entry.url,
+          timestamp: entry.timestamp,
+          status: entry.status || (entry.patterns?.length > 0 ? 'auto' : 'raw'),
+          patterns: entry.patterns || [],
+          auto_labels: entry.auto_labels,
+          verified_labels: entry.verified_labels,
+          summary: entry.summary,
+          metadata: entry.metadata,
+          patternCount: getEffectivePatternsCount(entry),
+          viewportCount: entry.viewport_screenshots?.length ?? 0,
+          hasScreenshot: !!entry.screenshot,
+        }));
+      },
+      'Failed to get lite dataset entries from IndexedDB',
+      [],
+    )) ?? []
+  );
+};
+
+export const getDatasetEntryById = async (
+  id: string,
+): Promise<DatasetEntry | null> => {
+  return (
+    (await withErrorHandling(
+      async () => {
+        const entry = await datasetDbManager.get<IndexedDBDatasetEntry>(
+          DATASET_ENTRIES_STORE,
+          id,
+        );
+        if (!entry) return null;
+
+        return {
+          id: entry.id,
+          url: entry.url,
+          timestamp: entry.timestamp,
+          screenshot: entry.screenshot,
+          dom: entry.dom,
+          auto_labels: entry.auto_labels,
+          verified_labels: entry.verified_labels,
+          status: entry.status || (entry.patterns?.length > 0 ? 'auto' : 'raw'),
+          patterns: entry.patterns || [],
+          viewport_screenshots: entry.viewport_screenshots,
+          metadata: entry.metadata,
+          summary: entry.summary,
+        };
+      },
+      `Failed to get dataset entry ${id} from IndexedDB`,
+      null,
+    )) ?? null
+  );
+};
+
+// Get all dataset entries from IndexedDB (FULL — use sparingly, for export only)
 export const getDatasetEntries = async (): Promise<DatasetEntry[]> => {
   return (
     (await withErrorHandling(
@@ -178,26 +289,65 @@ export const getDatasetEntries = async (): Promise<DatasetEntry[]> => {
   );
 };
 
-// Store dataset entry to IndexedDB
+// Store dataset entry to IndexedDB with write verification
 export const storeDatasetEntry = async (entry: DatasetEntry): Promise<void> => {
-  await withErrorHandling(async () => {
-    const data: IndexedDBDatasetEntry = {
-      id: entry.id,
-      url: entry.url,
-      timestamp: entry.timestamp,
-      screenshot: entry.screenshot,
-      dom: entry.dom,
-      auto_labels: entry.auto_labels,
-      verified_labels: entry.verified_labels,
-      status: entry.status || (entry.patterns?.length > 0 ? 'auto' : 'raw'),
-      patterns: entry.patterns || [],
-      viewport_screenshots: entry.viewport_screenshots,
-      metadata: entry.metadata,
-      summary: entry.summary,
-    };
+  await withErrorHandling(
+    async () => {
+      const data: IndexedDBDatasetEntry = {
+        id: entry.id,
+        url: entry.url,
+        timestamp: entry.timestamp,
+        screenshot: entry.screenshot,
+        dom: entry.dom,
+        auto_labels: entry.auto_labels,
+        verified_labels: entry.verified_labels,
+        status: entry.status || (entry.patterns?.length > 0 ? 'auto' : 'raw'),
+        patterns: entry.patterns || [],
+        viewport_screenshots: entry.viewport_screenshots,
+        metadata: entry.metadata,
+        summary: entry.summary,
+      };
 
-    await datasetDbManager.put(DATASET_ENTRIES_STORE, data);
-  }, 'Failed to store dataset entry');
+      await datasetDbManager.put(DATASET_ENTRIES_STORE, data);
+
+      // VERIFY the write succeeded (prevents silent data loss)
+      const verify = await datasetDbManager.get<IndexedDBDatasetEntry>(
+        DATASET_ENTRIES_STORE,
+        entry.id,
+      );
+      if (!verify) {
+        throw new Error(
+          'Write verification failed — entry was not saved. Storage may be full.',
+        );
+      }
+    },
+    'Failed to store dataset entry',
+    undefined,
+    async () => {
+      // On quota exceeded: retry without DOM and cropped images
+      console.warn(
+        '[datasetDB] Storage quota tight — retrying without heavy data',
+      );
+      const lightData: IndexedDBDatasetEntry = {
+        id: entry.id,
+        url: entry.url,
+        timestamp: entry.timestamp,
+        screenshot: entry.screenshot,
+        dom: undefined,
+        auto_labels: entry.auto_labels,
+        verified_labels: entry.verified_labels,
+        status: entry.status || (entry.patterns?.length > 0 ? 'auto' : 'raw'),
+        patterns: (entry.patterns || []).map((p) => {
+          const { croppedImage, ...rest } = p;
+          return rest;
+        }),
+        viewport_screenshots: entry.viewport_screenshots,
+        metadata: entry.metadata,
+        summary: entry.summary,
+      };
+      await datasetDbManager.put(DATASET_ENTRIES_STORE, lightData);
+    },
+  );
 };
 
 // Delete dataset entry from IndexedDB
@@ -228,19 +378,24 @@ export const getDatasetEntryCount = async (): Promise<number> => {
 };
 
 // Export dataset as JSONL
-export const exportDatasetAsJSONL = async (): Promise<string> => {
-  const entries = await getDatasetEntries();
-  return entries.map((entry) => JSON.stringify(entry)).join('\n');
+// Accepts entries as parameter to avoid loading all into memory
+export const exportDatasetAsJSONL = async (
+  entries?: DatasetEntry[],
+): Promise<string> => {
+  const data = entries ?? await getDatasetEntries();
+  return data.map((entry) => JSON.stringify(entry)).join('\n');
 };
 
 // Export dataset as formatted JSON array
+// Accepts entries as parameter to avoid loading all into memory
 export const exportDatasetAsJSON = async (
   pretty: boolean | number = 2,
+  entries?: DatasetEntry[],
 ): Promise<string> => {
-  const entries = await getDatasetEntries();
+  const data = entries ?? await getDatasetEntries();
   const spacing =
     typeof pretty === 'number' && pretty >= 0 ? pretty : pretty ? 2 : undefined;
-  return JSON.stringify(entries, null, spacing);
+  return JSON.stringify(data, null, spacing);
 };
 
 // Text-only JSONL export, flattened per detected pattern
@@ -262,11 +417,13 @@ export interface TextPatternExample {
   };
 }
 
-export const exportTextDatasetAsJSONL = async (): Promise<string> => {
-  const entries = await getDatasetEntries();
+export const exportTextDatasetAsJSONL = async (
+  entries?: DatasetEntry[],
+): Promise<string> => {
+  const data = entries ?? await getDatasetEntries();
   const lines: string[] = [];
 
-  entries.forEach((entry) => {
+  data.forEach((entry) => {
     if (!entry.patterns || entry.patterns.length === 0) {
       return;
     }
@@ -314,14 +471,16 @@ export interface ExportedDatasetRecord {
   metadata?: DatasetEntry['metadata'];
 }
 
-export const exportDatasetAsBundleZip = async (): Promise<Blob> => {
-  const entries = await getDatasetEntries();
+export const exportDatasetAsBundleZip = async (
+  entries?: DatasetEntry[],
+): Promise<Blob> => {
+  const data = entries ?? await getDatasetEntries();
   const zip = new JSZip();
   const imagesFolder = zip.folder('images');
   const manifest: ExportedDatasetRecord[] = [];
   const jsonlLines: string[] = [];
 
-  entries.forEach((entry, index) => {
+  data.forEach((entry, index) => {
     const safeId = sanitizeFilename(entry.id, `entry_${index + 1}`);
     const imageFileName = `${safeId}.png`;
     let imagePath: string | null = null;
@@ -372,8 +531,10 @@ export interface UITarsTrainingExample {
   };
 }
 
-export const exportForUITarsFineTuning = async (): Promise<Blob> => {
-  const entries = await getDatasetEntries();
+export const exportForUITarsFineTuning = async (
+  entries?: DatasetEntry[],
+): Promise<Blob> => {
+  const data = entries ?? await getDatasetEntries();
   const zip = new JSZip();
   const imagesFolder = zip.folder('images');
 
@@ -410,8 +571,8 @@ export const exportForUITarsFineTuning = async (): Promise<Blob> => {
   };
 
   // Process entries sequentially to await image loading
-  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-    const entry = entries[entryIndex];
+  for (let entryIndex = 0; entryIndex < data.length; entryIndex++) {
+    const entry = data[entryIndex];
 
     // Skip entries without valid screenshot or patterns
     if (!entry.screenshot || !entry.patterns || entry.patterns.length === 0) {
@@ -511,13 +672,15 @@ export function autoLabelToDarkPattern(autoLabel: AutoLabel): DarkPattern {
 /**
  * Convert VerifiedLabel to DarkPattern
  */
-export function verifiedLabelToDarkPattern(verifiedLabel: VerifiedLabel): DarkPattern {
+export function verifiedLabelToDarkPattern(
+  verifiedLabel: VerifiedLabel,
+): DarkPattern {
   return {
     type: verifiedLabel.category,
-    description: '',
+    description: verifiedLabel.description || '',
     severity: 'medium',
-    location: '',
-    evidence: '',
+    location: verifiedLabel.location || '',
+    evidence: verifiedLabel.evidence || '',
     confidence: verifiedLabel.verified ? 1.0 : 0.0,
     bbox: verifiedLabel.bbox,
   };

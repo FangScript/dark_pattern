@@ -38,6 +38,8 @@ export function Settings() {
   const [config, setConfig] = useState<AIConfig>({
     provider: AI_DEFAULTS.AI_PROVIDER,
     openaiApiKey: '',
+    openrouterApiKey: '',
+    openrouterModel: 'google/gemma-4-31b-it:free',
     localAiEnabled: false,
     localAiHost: AI_DEFAULTS.LOCAL_AI_HOST,
     selectedModel: undefined,
@@ -146,6 +148,18 @@ export function Settings() {
     await saveAIConfig({ openaiApiKey: apiKey });
   };
 
+  const handleOpenRouterApiKeyChange = async (apiKey: string) => {
+    const newConfig = { ...config, openrouterApiKey: apiKey };
+    setConfig(newConfig);
+    await saveAIConfig({ openrouterApiKey: apiKey });
+  };
+
+  const handleOpenRouterModelChange = async (model: string) => {
+    const newConfig = { ...config, openrouterModel: model };
+    setConfig(newConfig);
+    await saveAIConfig({ openrouterModel: model });
+  };
+
   const handleLocalAiToggle = async (enabled: boolean) => {
     const newConfig = { ...config, localAiEnabled: enabled };
     setConfig(newConfig);
@@ -219,6 +233,12 @@ export function Settings() {
                   <span>OpenAI (Cloud)</span>
                 </Space>
               </Radio>
+              <Radio value="openrouter">
+                <Space>
+                  <ApiOutlined />
+                  <span>OpenRouter (Free Models)</span>
+                </Space>
+              </Radio>
               <Radio value="local">
                 <Space>
                   <SettingOutlined />
@@ -231,6 +251,108 @@ export function Settings() {
       </Card>
 
       <Divider />
+
+      {/* OpenRouter Configuration */}
+      {config.provider === 'openrouter' && (
+        <Card
+          title={
+            <Space>
+              <ApiOutlined />
+              <span>OpenRouter Configuration</span>
+            </Space>
+          }
+          bordered={false}
+        >
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <div>
+              <p style={{ marginBottom: 8 }}>OpenRouter API Key:</p>
+              <Input.Password
+                placeholder="sk-or-..."
+                value={config.openrouterApiKey}
+                onChange={(e) => handleOpenRouterApiKeyChange(e.target.value)}
+                style={{ marginBottom: 12 }}
+              />
+              <Button
+                type="primary"
+                onClick={async () => {
+                  await saveAIConfig({ openrouterApiKey: config.openrouterApiKey });
+                  message.success('API key saved');
+                }}
+                block
+              >
+                Save Configuration
+              </Button>
+            </div>
+
+            <div>
+              <p style={{ marginBottom: 8 }}>Select Model:</p>
+              <Select
+                value={config.openrouterModel}
+                onChange={handleOpenRouterModelChange}
+                style={{ width: '100%' }}
+                placeholder="Select a model"
+              >
+                <Select.Option value="google/gemma-4-31b-it:free">
+                  Google Gemma 4 (31B) - Free
+                </Select.Option>
+                <Select.Option value="google/gemma-3-27b-it:free">
+                  Google Gemma 3 (27B) - Free
+                </Select.Option>
+                <Select.Option value="qwen/qwen-2.5-72b-instruct:free">
+                  Qwen 2.5 (72B) - Free
+                </Select.Option>
+                <Select.Option value="meta-llama/llama-3.2-11b-vision-instruct:free">
+                  Llama 3.2 (11B Vision) - Free
+                </Select.Option>
+                <Select.Option value="anthropic/claude-3.5-sonnet:free">
+                  Claude 3.5 Sonnet - Free
+                </Select.Option>
+                <Select.Option value="openai/gpt-4o-mini:free">
+                  GPT-4o Mini - Free
+                </Select.Option>
+              </Select>
+            </div>
+
+            {config.openrouterModel && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  background: '#f6ffed',
+                  border: '1px solid #b7eb8f',
+                  borderRadius: '4px',
+                }}
+              >
+                <Text strong style={{ color: '#389e0d' }}>
+                  Active Model:
+                </Text>
+                <br />
+                <Text style={{ color: '#389e0d' }}>{config.openrouterModel}</Text>
+              </div>
+            )}
+
+            <div style={{ fontSize: '12px', color: '#666' }}>
+              <Paragraph>
+                <strong>About OpenRouter:</strong>
+                <ul style={{ paddingLeft: '20px', margin: '8px 0' }}>
+                  <li>Free credits available for new accounts</li>
+                  <li>Access to Google, Meta, Anthropic models</li>
+                  <li>No setup required - just get an API key</li>
+                </ul>
+                Get your key at:{' '}
+                <a
+                  href="https://openrouter.ai/settings"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  openrouter.ai
+                </a>
+              </Paragraph>
+            </div>
+          </Space>
+        </Card>
+      )}
+
+      {config.provider === 'openrouter' && <Divider />}
 
       {/* OpenAI Configuration */}
       {config.provider === 'openai' && (

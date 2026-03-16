@@ -15,6 +15,7 @@
 import { autoLabelScreenshot, autoLabelDOMOnly, isImageSupportError } from './autoLabeling';
 import type { AutoLabel } from './datasetDB';
 import { getActiveModelConfig } from './aiConfig';
+import { executeWithRateLimit, getAgentLimits } from './rateLimiter';
 import { captureTabScreenshot } from './screenshotCapture';
 import { AIActionType, callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
 import type { AIArgs } from '@darkpatternhunter/core/ai-model';
@@ -80,13 +81,24 @@ async function getTabUrl(tabId: number): Promise<string> {
 async function getViewportMeta(tabId: number) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => ({
-      w: window.innerWidth,
-      h: window.innerHeight,
-      y: Math.round(window.scrollY),
-      scrollHeight: document.body.scrollHeight,
-      dpr: window.devicePixelRatio || 1,
-    }),
+    func: () => {
+      // Find the true scroll height across different browser implementations
+      const scrollHeight = Math.max(
+        document.body.scrollHeight,
+        document.body.offsetHeight,
+        document.documentElement.clientHeight,
+        document.documentElement.scrollHeight,
+        document.documentElement.offsetHeight
+      );
+      
+      return {
+        w: window.innerWidth,
+        h: window.innerHeight,
+        y: Math.round(window.scrollY || document.documentElement.scrollTop),
+        scrollHeight: scrollHeight,
+        dpr: window.devicePixelRatio || 1,
+      };
+    },
   });
   return results[0]?.result ?? { w: 1280, h: 720, y: 0, scrollHeight: 3000, dpr: 1 };
 }
@@ -95,10 +107,14 @@ async function scrollTo(tabId: number, position: 'top' | 'down'): Promise<void> 
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (pos: string) => {
+      const scrollEl = document.scrollingElement || document.documentElement;
       if (pos === 'top') {
-        window.scrollTo({ top: 0, behavior: 'instant' });
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        scrollEl.scrollTop = 0;
       } else {
-        window.scrollBy({ top: window.innerHeight * 0.85, behavior: 'instant' });
+        const step = window.innerHeight * 0.85;
+        window.scrollBy({ top: step, behavior: 'instant' });
+        scrollEl.scrollTop += step;
       }
     },
     args: [position],
@@ -239,7 +255,10 @@ async function callVLM<T>(prompt: string, screenshot?: string): Promise<T | null
   ];
 
   try {
-    const response = await callAIWithObjectResponse<T>(args, AIActionType.EXTRACT_DATA, modelConfig);
+    const response = await executeWithRateLimit(
+      () => callAIWithObjectResponse<T>(args, AIActionType.EXTRACT_DATA, modelConfig),
+      { label: `agent-analysis-scan-${screenshot ? 'vision' : 'dom'}` },
+    );
     return response?.content ?? null;
   } catch (err) {
     if (screenshot && isImageSupportError(err)) setVisionCapable(false);
@@ -414,9 +433,10 @@ export async function runAgentLoop(
 
   try {
     const meta = await getViewportMeta(tabId);
+    const agentLimits = await getAgentLimits();
     const totalScrollSteps = Math.min(
       Math.ceil(meta.scrollHeight / (meta.h * 0.85)),
-      10, // Cap at 10 viewports max
+      agentLimits.maxViewports, // Dynamic based on provider
     );
 
     console.log(`[agent] Phase 1: Scanning ${totalScrollSteps} viewports (page=${meta.scrollHeight}px, viewport=${meta.h}px)`);
@@ -498,10 +518,13 @@ export async function runAgentLoop(
   await new Promise((r) => setTimeout(r, 500));
 
   const interactiveElements = await findInteractiveElements(tabId);
-  console.log(`[agent] Phase 3: Found ${interactiveElements.length} interactive elements`);
-  agentSteps.push(`phase-3: found ${interactiveElements.length} interactive elements`);
+  const agentLimits = await getAgentLimits();
+  const limitedInteractions = interactiveElements.slice(0, agentLimits.maxInteractions);
+  
+  console.log(`[agent] Phase 3: Found ${interactiveElements.length}, processing max ${limitedInteractions}`);
+  agentSteps.push(`phase-3: found ${interactiveElements.length}, limit ${agentLimits.maxInteractions}`);
 
-  for (const element of interactiveElements) {
+  for (const element of limitedInteractions) {
     try {
       onProgress(`Phase 3: Clicking "${element.description}"...`);
       const clicked = await clickElement(tabId, element);
