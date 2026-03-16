@@ -80,13 +80,24 @@ async function getTabUrl(tabId: number): Promise<string> {
 async function getViewportMeta(tabId: number) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => ({
-      w: window.innerWidth,
-      h: window.innerHeight,
-      y: Math.round(window.scrollY),
-      scrollHeight: document.body.scrollHeight,
-      dpr: window.devicePixelRatio || 1,
-    }),
+    func: () => {
+      // Find the true scroll height across different browser implementations
+      const scrollHeight = Math.max(
+        document.body.scrollHeight,
+        document.body.offsetHeight,
+        document.documentElement.clientHeight,
+        document.documentElement.scrollHeight,
+        document.documentElement.offsetHeight
+      );
+      
+      return {
+        w: window.innerWidth,
+        h: window.innerHeight,
+        y: Math.round(window.scrollY || document.documentElement.scrollTop),
+        scrollHeight: scrollHeight,
+        dpr: window.devicePixelRatio || 1,
+      };
+    },
   });
   return results[0]?.result ?? { w: 1280, h: 720, y: 0, scrollHeight: 3000, dpr: 1 };
 }
@@ -95,10 +106,14 @@ async function scrollTo(tabId: number, position: 'top' | 'down'): Promise<void> 
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (pos: string) => {
+      const scrollEl = document.scrollingElement || document.documentElement;
       if (pos === 'top') {
-        window.scrollTo({ top: 0, behavior: 'instant' });
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        scrollEl.scrollTop = 0;
       } else {
-        window.scrollBy({ top: window.innerHeight * 0.85, behavior: 'instant' });
+        const step = window.innerHeight * 0.85;
+        window.scrollBy({ top: step, behavior: 'instant' });
+        scrollEl.scrollTop += step;
       }
     },
     args: [position],

@@ -13,6 +13,11 @@ export default defineConfig({
       watchOptions: {
         ignored: /\.git/,
       },
+      plugins: [
+        new (require('@rspack/core').ProvidePlugin)({
+          React: ['react'],
+        }),
+      ],
     },
   },
   environments: {

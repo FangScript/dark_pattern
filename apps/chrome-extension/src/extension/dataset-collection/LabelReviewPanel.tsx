@@ -99,26 +99,22 @@ async function cropEvidence(
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      // Add padding around the bbox for context
-      const pad = 20;
-      const sx = Math.max(0, x - pad);
-      const sy = Math.max(0, y - pad);
-      const sw = Math.min(img.width - sx, w + pad * 2);
-      const sh = Math.min(img.height - sy, h + pad * 2);
-
-      canvas.width = sw;
-      canvas.height = sh;
+      canvas.width = img.width;
+      canvas.height = img.height;
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(null); return; }
 
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      // Draw full image
+      ctx.drawImage(img, 0, 0);
 
       // Draw a highlight rect for the actual bbox
-      const bx = x - sx;
-      const by = y - sy;
       ctx.strokeStyle = '#ff4d4f';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(bx, by, w, h);
+      ctx.lineWidth = 5;
+      ctx.strokeRect(x, y, w, h);
+
+      // Add a slight red tint inside the box for better visibility
+      ctx.fillStyle = 'rgba(255, 77, 79, 0.2)';
+      ctx.fillRect(x, y, w, h);
 
       resolve(canvas.toDataURL('image/png'));
     };
@@ -192,6 +188,33 @@ export default function LabelReviewPanel({
   onCancel,
 }: LabelReviewPanelProps) {
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>(() => {
+    // If the entry has verified_labels, use those to initialize the edit state
+    if (entry.verified_labels && entry.verified_labels.length > 0) {
+      return entry.verified_labels.map((verifiedLabel, idx) => ({
+        id: `review-verified-${idx}`,
+        // Reconstruct a pseudo-autoLabel for the UI to display the base fields
+        autoLabel: {
+          category: verifiedLabel.category,
+          bbox: verifiedLabel.bbox,
+          confidence: 1.0, // verified labels are 100% confident
+          model: 'human-verified',
+          severity: 'medium', // Fallback severity
+          location: verifiedLabel.location,
+          description: verifiedLabel.description,
+          evidence: verifiedLabel.evidence,
+          viewportIndex: verifiedLabel.viewportIndex,
+        },
+        verified: verifiedLabel.verified,
+        editedBbox: verifiedLabel.bbox,
+        editedCategory: verifiedLabel.category,
+        editedLocation: verifiedLabel.location,
+        editedDescription: verifiedLabel.description,
+        editedEvidence: verifiedLabel.evidence,
+        notes: verifiedLabel.notes,
+      }));
+    }
+
+    // Otherwise, fallback to raw auto_labels
     return (entry.auto_labels || []).map((autoLabel, idx) => ({
       id: `review-${idx}`,
       autoLabel,
@@ -267,6 +290,10 @@ export default function LabelReviewPanel({
         bbox: [100, 100, 200, 50],
         confidence: 1.0,
         model: 'manual',
+        severity: 'medium',
+        location: '',
+        description: '',
+        evidence: '',
         viewportIndex: 0,
       },
       verified: null,
@@ -285,7 +312,7 @@ export default function LabelReviewPanel({
         verified: true,
         reviewTimestamp: Date.now(),
         notes: item.notes,
-        viewportIndex: item.autoLabel.viewportIndex,
+        viewportIndex: item.autoLabel.viewportIndex ?? 0,
         location: item.editedLocation ?? item.autoLabel.location,
         description: item.editedDescription ?? item.autoLabel.description,
         evidence: item.editedEvidence ?? item.autoLabel.evidence,
@@ -300,7 +327,6 @@ export default function LabelReviewPanel({
     }
 
     onSave(verifiedLabels);
-    message.success(`Saved ${verifiedLabels.length} verified label(s)`);
   };
 
   const pendingCount = reviewItems.filter((item) => item.verified === null).length;

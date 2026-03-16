@@ -514,10 +514,10 @@ export function autoLabelToDarkPattern(autoLabel: AutoLabel): DarkPattern {
 export function verifiedLabelToDarkPattern(verifiedLabel: VerifiedLabel): DarkPattern {
   return {
     type: verifiedLabel.category,
-    description: '',
+    description: verifiedLabel.description || '',
     severity: 'medium',
-    location: '',
-    evidence: '',
+    location: verifiedLabel.location || '',
+    evidence: verifiedLabel.evidence || '',
     confidence: verifiedLabel.verified ? 1.0 : 0.0,
     bbox: verifiedLabel.bbox,
   };

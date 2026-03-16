@@ -13,6 +13,7 @@ import {
 // are kept for the analyzePageForDarkPatterns fallback function below.
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import { runAgentLoop, agentPatternsToAutoLabels, type ViewportCapture } from '../../utils/agentAnalysis';
+import { AIActionType, callAIWithObjectResponse, type AIArgs } from '@darkpatternhunter/core/ai-model';
 import {
   Alert,
   Button,
@@ -863,12 +864,15 @@ export default function DatasetCollection() {
           prev ? { ...prev, status: 'Opening page...' } : null,
         );
 
-        // Open URL in new tab
-        tab = await chrome.tabs.create({ url, active: false });
+        // Open URL in new tab and ensure it gets focus
+        tab = await chrome.tabs.create({ url, active: true });
 
-        if (!tab.id) {
+        if (!tab.id || !tab.windowId) {
           throw new Error('Failed to create tab');
         }
+
+        // Must bring window to front for viewport screenshots to work
+        await chrome.windows.update(tab.windowId, { focused: true });
 
         setProgress((prev) =>
           prev ? { ...prev, status: 'Waiting for page to load...' } : null,

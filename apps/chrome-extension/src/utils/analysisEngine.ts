@@ -10,6 +10,7 @@ import { callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
 import { globalModelConfigManager } from '@darkpatternhunter/shared/env';
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import type { ChatCompletionMessageParam } from 'openai/resources/index';
+import { useState, useCallback } from 'react';
 
 import type { DarkPattern, DatasetEntry } from './datasetDB';
 import { getDatasetEntries, storeDatasetEntry } from './datasetDB';
@@ -408,18 +409,18 @@ ${entry.dom ? `\nDOM Structure (excerpt):\n${entry.dom.substring(0, 2000)}...` :
  * React Hook for batch analysis of dataset entries
  */
 export function useBatchAnalysis() {
-  const [isAnalyzing, setIsAnalyzing] = React.useState(false);
-  const [progress, setProgress] = React.useState(0);
-  const [total, setTotal] = React.useState(0);
-  const [results, setResults] = React.useState<Map<string, AnalysisResult>>(
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [results, setResults] = useState<Map<string, AnalysisResult>>(
     new Map(),
   );
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   /**
    * Analyze multiple entries in batch
    */
-  const analyzeBatch = React.useCallback(
+  const analyzeBatch = useCallback(
     async (
       entryIds: string[],
       options?: { language?: 'english' | 'urdu'; maxRetries?: number },
@@ -461,7 +462,7 @@ export function useBatchAnalysis() {
   /**
    * Analyze all pending entries
    */
-  const analyzePendingEntries = React.useCallback(
+  const analyzePendingEntries = useCallback(
     async (options?: {
       language?: 'english' | 'urdu';
       maxRetries?: number;
@@ -480,7 +481,7 @@ export function useBatchAnalysis() {
   /**
    * Reset the analysis state
    */
-  const reset = React.useCallback(() => {
+  const reset = useCallback(() => {
     setIsAnalyzing(false);
     setProgress(0);
     setTotal(0);
@@ -500,5 +501,4 @@ export function useBatchAnalysis() {
   };
 }
 
-// Import React for the hook
-import React from 'react';
+
