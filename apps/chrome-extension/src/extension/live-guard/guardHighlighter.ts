@@ -35,7 +35,11 @@ interface DetectedPattern {
   evidence: string;
   confidence: number;
   bbox?: [number, number, number, number];
+  /** dom = document-space CSS px from text grounding; vlm = normalized screenshot bbox fallback */
+  bboxSource?: 'dom' | 'vlm';
   counterMeasure: string;
+  scrollY?: number;                          // page scroll offset when screenshot was taken
+  screenshotSize?: ScreenshotSize;           // dimensions of the viewport screenshot
 }
 
 // Extended pattern interface with screenshot metadata
@@ -62,7 +66,7 @@ function initShadowDOM(): void {
   shadowHost = document.createElement('div');
   shadowHost.id = 'live-guard-shadow-host';
   shadowHost.style.cssText = `
-    position: fixed;
+    position: absolute;
     top: 0;
     left: 0;
     width: 100%;
@@ -79,27 +83,45 @@ function initShadowDOM(): void {
   style.textContent = `
     .live-guard-highlight {
       position: absolute;
-      border: 2px solid;
+      border: 2.5px solid;
       border-radius: 4px;
       pointer-events: auto;
       cursor: pointer;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
-      transition: all 0.3s ease;
-      animation: liveGuardPulse 2s infinite;
+      /* Tight, precise box — low bg so you can see the element underneath */
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3), 0 0 6px rgba(0,0,0,0.25);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      animation: liveGuardPulse 2.5s ease-in-out infinite;
+      box-sizing: border-box;
     }
 
     .live-guard-highlight:hover {
-      filter: brightness(1.2);
-      transform: scale(1.02);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5), 0 0 12px rgba(0,0,0,0.4);
+      animation: none;
+      opacity: 1 !important;
     }
 
     @keyframes liveGuardPulse {
-      0%, 100% {
-        opacity: 0.3;
-      }
-      50% {
-        opacity: 0.6;
-      }
+      0%, 100% { opacity: 0.65; }
+      50%       { opacity: 1;    }
+    }
+
+    /* Small badge shown when no precise bbox is available */
+    .live-guard-badge {
+      position: absolute;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: white;
+      pointer-events: auto;
+      cursor: default;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      opacity: 0.9;
     }
 
     .live-guard-tooltip {
@@ -218,116 +240,209 @@ function clearHighlights(): void {
 /**
  * Get color based on severity
  */
-function getSeverityColor(severity: string): { bg: string; border: string } {
+function getSeverityColor(severity: string): { bg: string; border: string; badge: string } {
   const colors = {
-    critical: { bg: 'rgba(255, 77, 79, 0.3)', border: '#ff4d4f' },
-    high: { bg: 'rgba(255, 122, 69, 0.3)', border: '#ff7a45' },
-    medium: { bg: 'rgba(255, 169, 64, 0.3)', border: '#ffa940' },
-    low: { bg: 'rgba(82, 196, 26, 0.3)', border: '#52c41a' },
+    // Low opacity bg keeps the highlight tight and non-intrusive
+    critical: { bg: 'rgba(255, 77, 79, 0.10)', border: '#ff4d4f', badge: '#cf1322' },
+    high:     { bg: 'rgba(255, 122, 69, 0.10)', border: '#ff7a45', badge: '#d4380d' },
+    medium:   { bg: 'rgba(255, 169, 64, 0.10)', border: '#ffa940', badge: '#d46b08' },
+    low:      { bg: 'rgba(82, 196, 26, 0.10)',  border: '#52c41a', badge: '#389e0d' },
   };
   return colors[severity as keyof typeof colors] || colors.low;
 }
 
 /**
- * Create a highlight overlay for a detected pattern
- * Uses high-precision coordinate mapping to snap to actual DOM elements
+ * Decide whether to prefer the AI-mapped bbox over the snapped DOM element.
+ * If the DOM element is more than MAX_SNAP_RATIO times larger in area than
+ * the AI bbox, the element is too big (e.g. a container or body) — use AI coords.
+ */
+const MAX_SNAP_RATIO = 3.0;
+
+function shouldUseAICoords(
+  aiWidth: number, aiHeight: number,
+  elemWidth: number, elemHeight: number,
+): boolean {
+  const aiArea = Math.max(aiWidth * aiHeight, 1);
+  const elemArea = elemWidth * elemHeight;
+  return elemArea / aiArea > MAX_SNAP_RATIO;
+}
+
+/**
+ * Create a tight, precise highlight overlay for a detected pattern.
+ *
+ * Strategy (in order of preference):
+ *  0. DOM-grounded — evidence-based bbox in document CSS pixels (no VLM mapping).
+ *  1. DOM snap  — if we find the actual element AND it's not disproportionately
+ *                 larger than the AI bbox, use its exact client rect.
+ *  2. AI coords — use the mapped AI bbox directly (more precise than a huge parent).
+ *  3. Badge     — if no bbox or screenshot size, render a small label instead of
+ *                 covering the whole page.
  */
 function createHighlightOverlay(
   pattern: PatternWithMetadata,
   index: number,
 ): HTMLElement {
-  const overlay = document.createElement('div');
-  overlay.className = 'live-guard-highlight';
-  overlay.dataset.patternIndex = String(index);
-  overlay.dataset.patternType = pattern.type;
-  overlay.dataset.severity = pattern.severity;
-
-  // Set styles based on severity
   const colors = getSeverityColor(pattern.severity);
+  const effectiveScreenshotSize = pattern.screenshotSize ?? currentScreenshotSize;
+  const captureScrollY = pattern.scrollY ?? 0;
 
-  overlay.style.cssText = `
-    background-color: ${colors.bg};
-    border-color: ${colors.border};
-    box-shadow: 0 0 10px ${colors.bg};
-  `;
-
-  // If bbox is provided, use high-precision coordinate mapping
-  if (pattern.bbox && currentScreenshotSize) {
-    const bbox: BBox = {
+  // ── Case 0: Text-grounded bbox (document coordinates, CSS px) ────────────
+  if (pattern.bboxSource === 'dom' && pattern.bbox) {
+    const domBbox: BBox = {
       x: pattern.bbox[0],
       y: pattern.bbox[1],
       width: pattern.bbox[2],
       height: pattern.bbox[3],
     };
-
-    // Validate bbox
-    if (!isValidBbox(bbox)) {
-      debug('Invalid bbox, skipping highlight:', bbox);
-      // Default full-page overlay if invalid bbox
-      overlay.style.left = '0';
-      overlay.style.top = '0';
-      overlay.style.width = '100%';
-      overlay.style.height = '100%';
-    } else {
-      // Get current viewport and scroll position
-      const viewportSize = getViewportSize();
-      const scrollPosition = getScrollPosition();
-      const dpr = getDevicePixelRatio();
-
-      // Map bbox to DOM coordinates with high precision
-      const result = getCanvasToDomCoords(
-        bbox,
-        currentScreenshotSize,
-        viewportSize,
-        scrollPosition,
-        dpr,
-        pattern.isNormalized !== false, // Default to true if not specified
-      );
-
-      // If we found an element, use its bounding rect for perfect snap-to-element highlight
-      if (result.element && result.elementRect) {
-        const elementRect = result.elementRect;
-        overlay.style.left = `${elementRect.left + scrollPosition.scrollX}px`;
-        overlay.style.top = `${elementRect.top + scrollPosition.scrollY}px`;
-        overlay.style.width = `${elementRect.width}px`;
-        overlay.style.height = `${elementRect.height}px`;
-
-        debug('Snapped highlight to element:', {
-          element: result.element.tagName,
-          rect: elementRect,
-        });
-      } else {
-        // Use mapped coordinates if no element found
-        overlay.style.left = `${result.domX}px`;
-        overlay.style.top = `${result.domY}px`;
-        overlay.style.width = `${result.domWidth}px`;
-        overlay.style.height = `${result.domHeight}px`;
-
-        debug('Using mapped coordinates (no element found):', {
-          domX: result.domX,
-          domY: result.domY,
-          domWidth: result.domWidth,
-          domHeight: result.domHeight,
-        });
-      }
+    if (!isValidBbox(domBbox)) {
+      debug('Invalid DOM bbox — badge for:', pattern.type);
+      const badge = document.createElement('div');
+      badge.className = 'live-guard-badge';
+      badge.dataset.patternIndex = String(index);
+      badge.dataset.patternType = pattern.type;
+      badge.dataset.severity = pattern.severity;
+      badge.style.cssText = `
+        background-color: ${colors.badge};
+        top: ${16 + index * 32}px;
+        right: 16px;
+      `;
+      badge.textContent = `⚠ ${pattern.type}`;
+      badge.addEventListener('mouseenter', () => showTooltip(pattern, badge));
+      badge.addEventListener('mouseleave', () => hideTooltip());
+      return badge;
     }
-  } else {
-    // Default full-page overlay if no bbox or screenshot size
-    overlay.style.left = '0';
-    overlay.style.top = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
+    const overlay = document.createElement('div');
+    overlay.className = 'live-guard-highlight';
+    overlay.dataset.patternIndex = String(index);
+    overlay.dataset.patternType = pattern.type;
+    overlay.dataset.severity = pattern.severity;
+    overlay.style.cssText = `
+      background-color: ${colors.bg};
+      border-color: ${colors.border};
+      left: ${domBbox.x}px;
+      top: ${domBbox.y}px;
+      width: ${domBbox.width}px;
+      height: ${domBbox.height}px;
+    `;
+    overlay.addEventListener('mouseenter', () => showTooltip(pattern, overlay));
+    overlay.addEventListener('mouseleave', () => hideTooltip());
+    debug('DOM-grounded highlight:', domBbox);
+    return overlay;
   }
 
-  // Add tooltip on hover
-  overlay.addEventListener('mouseenter', () => {
-    showTooltip(pattern, overlay);
-  });
+  // ── Case 3: No bbox info → render a small badge in the top-right corner ──
+  if (!pattern.bbox || !effectiveScreenshotSize) {
+    const badge = document.createElement('div');
+    badge.className = 'live-guard-badge';
+    badge.dataset.patternIndex = String(index);
+    badge.dataset.patternType = pattern.type;
+    badge.dataset.severity = pattern.severity;
+    badge.style.cssText = `
+      background-color: ${colors.badge};
+      top: ${16 + index * 32}px;
+      right: 16px;
+    `;
+    badge.textContent = `⚠ ${pattern.type}`;
+    badge.addEventListener('mouseenter', () => showTooltip(pattern, badge));
+    badge.addEventListener('mouseleave', () => hideTooltip());
+    debug('No bbox — rendering badge for:', pattern.type);
+    return badge;
+  }
 
-  overlay.addEventListener('mouseleave', () => {
-    hideTooltip();
-  });
+  const bbox: BBox = {
+    x: pattern.bbox[0],
+    y: pattern.bbox[1],
+    width: pattern.bbox[2],
+    height: pattern.bbox[3],
+  };
 
+  // ── Case 3b: Bbox exists but is invalid → badge ────────────────────────────
+  if (!isValidBbox(bbox)) {
+    debug('Invalid bbox — rendering badge for:', pattern.type);
+    const badge = document.createElement('div');
+    badge.className = 'live-guard-badge';
+    badge.dataset.patternIndex = String(index);
+    badge.dataset.patternType = pattern.type;
+    badge.dataset.severity = pattern.severity;
+    badge.style.cssText = `
+      background-color: ${colors.badge};
+      top: ${16 + index * 32}px;
+      right: 16px;
+    `;
+    badge.textContent = `⚠ ${pattern.type}`;
+    badge.addEventListener('mouseenter', () => showTooltip(pattern, badge));
+    badge.addEventListener('mouseleave', () => hideTooltip());
+    return badge;
+  }
+
+  // ── Build overlay div ─────────────────────────────────────────────────────
+  const overlay = document.createElement('div');
+  overlay.className = 'live-guard-highlight';
+  overlay.dataset.patternIndex = String(index);
+  overlay.dataset.patternType = pattern.type;
+  overlay.dataset.severity = pattern.severity;
+  overlay.style.cssText = `
+    background-color: ${colors.bg};
+    border-color: ${colors.border};
+  `;
+
+  // ── Map AI bbox → DOM coordinates ────────────────────────────────────────
+  const viewportSize = getViewportSize();
+  const dpr = getDevicePixelRatio();
+  // Pass scrollY=0 so mapping is viewport-relative; we add captureScrollY manually.
+  const zeroScroll: ScrollPosition = { scrollX: 0, scrollY: 0 };
+
+  const result = getCanvasToDomCoords(
+    bbox,
+    effectiveScreenshotSize,
+    viewportSize,
+    zeroScroll,
+    dpr,
+    pattern.isNormalized !== false,
+  );
+
+  const aiLeft   = result.domX;
+  const aiTop    = result.domY + captureScrollY;
+  const aiWidth  = result.domWidth;
+  const aiHeight = result.domHeight;
+
+  // ── Case 1: Smart snap-to-element ────────────────────────────────────────
+  if (result.element && result.elementRect) {
+    const el   = result.element;
+    const rect = result.elementRect;
+    const currentScrollY = window.scrollY || 0;
+
+    const elemLeft   = rect.left;
+    const elemTop    = rect.top + currentScrollY;
+    const elemWidth  = rect.width;
+    const elemHeight = rect.height;
+
+    if (shouldUseAICoords(aiWidth, aiHeight, elemWidth, elemHeight)) {
+      // Element is too large (e.g. a container div) — use AI bbox directly
+      overlay.style.left   = `${aiLeft}px`;
+      overlay.style.top    = `${aiTop}px`;
+      overlay.style.width  = `${aiWidth}px`;
+      overlay.style.height = `${aiHeight}px`;
+      debug('Element too large, using AI coords:', { elem: el.tagName, elemWidth, elemHeight, aiWidth, aiHeight });
+    } else {
+      // Good snap — element size is proportional
+      overlay.style.left   = `${elemLeft}px`;
+      overlay.style.top    = `${elemTop}px`;
+      overlay.style.width  = `${elemWidth}px`;
+      overlay.style.height = `${elemHeight}px`;
+      debug('Snapped to element:', { elem: el.tagName, elemWidth, elemHeight });
+    }
+  } else {
+    // ── Case 2: No element found — use AI coords ────────────────────────
+    overlay.style.left   = `${aiLeft}px`;
+    overlay.style.top    = `${aiTop}px`;
+    overlay.style.width  = `${aiWidth}px`;
+    overlay.style.height = `${aiHeight}px`;
+    debug('No element found, using AI coords:', { aiLeft, aiTop, aiWidth, aiHeight });
+  }
+
+  overlay.addEventListener('mouseenter', () => showTooltip(pattern, overlay));
+  overlay.addEventListener('mouseleave', () => hideTooltip());
   return overlay;
 }
 
@@ -395,31 +510,41 @@ function showHighlights(
 ): void {
   clearHighlights();
 
-  // Store screenshot size for coordinate mapping
   if (screenshotSize) {
     currentScreenshotSize = screenshotSize;
   }
 
-  // Initialize Shadow DOM if not already done
   initShadowDOM();
 
-  if (!shadowRoot) {
+  if (!shadowRoot || !shadowHost) {
     debug('Shadow root not available');
     return;
   }
 
+  // Stretch the host to the full document height so absolute-positioned
+  // overlays at any page-Y coordinate are visible and scroll with the page.
+  const docHeight = Math.max(
+    document.body.scrollHeight,
+    document.documentElement.scrollHeight,
+  );
+  shadowHost.style.height = `${docHeight}px`;
+  debug('Shadow host height set to', docHeight);
+
   patterns.forEach((pattern, index) => {
+    // Each pattern carries its own screenshotSize + scrollY from the viewport it was captured in.
+    // Fall back to the shared currentScreenshotSize if not present.
     const patternWithMetadata: PatternWithMetadata = {
       ...pattern,
-      screenshotSize: currentScreenshotSize || undefined,
-      isNormalized,
+      screenshotSize: pattern.screenshotSize ?? currentScreenshotSize ?? undefined,
+      // DOM-grounded boxes skip normalized VLM mapping inside createHighlightOverlay
+      isNormalized: pattern.bboxSource === 'dom' ? false : isNormalized,
     };
     const highlight = createHighlightOverlay(patternWithMetadata, index);
     shadowRoot!.appendChild(highlight);
     currentHighlights.push(highlight);
   });
 
-  debug(`Added ${patterns.length} highlights`);
+  debug(`Added ${patterns.length} highlights across multiple viewports`);
 }
 
 /**

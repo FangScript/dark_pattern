@@ -20,6 +20,8 @@ export interface AutoLabel {
   location?: string;
   evidence?: string;
   viewportIndex?: number; // Which viewport this pattern was detected in
+  /** dom = bbox from evidence grounding; vlm = model bbox */
+  bboxSource?: 'dom' | 'vlm';
 }
 
 // Verified label from human reviewer

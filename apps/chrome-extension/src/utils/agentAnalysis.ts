@@ -14,6 +14,8 @@
 
 import { autoLabelScreenshot, autoLabelDOMOnly, isImageSupportError } from './autoLabeling';
 import type { AutoLabel } from './datasetDB';
+import { getImageDimensions } from './coordinateUtils';
+import { groundAutoLabelsViewportRelative } from './domEvidenceGrounding';
 import { getActiveModelConfig } from './aiConfig';
 import { captureTabScreenshot } from './screenshotCapture';
 import { AIActionType, callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
@@ -196,14 +198,32 @@ async function analyzeScreenshot(
   screenshot: string,
   tabId: number,
   label: string,
+  scrollY: number,
 ): Promise<AutoLabel[]> {
   const dom = await getDOMText(tabId);
   const url = await getTabUrl(tabId);
 
+  let imgW = 1280;
+  let imgH = 720;
+  try {
+    const d = await getImageDimensions(screenshot);
+    imgW = d.width;
+    imgH = d.height;
+  } catch {
+    // keep defaults
+  }
+
   // If we already know vision doesn't work → DOM-only
   if (_visionCapable === false) {
     try {
-      const labels = await autoLabelDOMOnly(dom, url);
+      let labels = await autoLabelDOMOnly(dom, url);
+      labels = await groundAutoLabelsViewportRelative(
+        tabId,
+        labels,
+        scrollY,
+        imgW,
+        imgH,
+      );
       console.log(`[agent] [${label}] DOM-only → ${labels.length} patterns`);
       return labels;
     } catch (err) {
@@ -214,7 +234,10 @@ async function analyzeScreenshot(
 
   // Try vision
   try {
-    const labels = await autoLabelScreenshot(screenshot, dom);
+    const labels = await autoLabelScreenshot(screenshot, dom, undefined, {
+      tabId,
+      scrollY,
+    });
     if (_visionCapable === null) setVisionCapable(true);
     console.log(`[agent] [${label}] Vision → ${labels.length} patterns`);
     return labels;
@@ -223,7 +246,14 @@ async function analyzeScreenshot(
       setVisionCapable(false);
       console.warn(`[agent] Vision not supported, switching to DOM-only`);
       try {
-        const labels = await autoLabelDOMOnly(dom, url);
+        let labels = await autoLabelDOMOnly(dom, url);
+        labels = await groundAutoLabelsViewportRelative(
+          tabId,
+          labels,
+          scrollY,
+          imgW,
+          imgH,
+        );
         console.log(`[agent] [${label}] DOM-only fallback → ${labels.length} patterns`);
         return labels;
       } catch {
@@ -482,7 +512,12 @@ export async function runAgentLoop(
       });
       await new Promise((r) => setTimeout(r, 300));
 
-      const patterns = await analyzeScreenshot(cap.screenshot, tabId, `scan-${cap.index}`);
+      const patterns = await analyzeScreenshot(
+        cap.screenshot,
+        tabId,
+        `scan-${cap.index}`,
+        cap.scrollY,
+      );
 
       viewports.push({
         screenshot: cap.screenshot,
@@ -535,7 +570,12 @@ export async function runAgentLoop(
       const vmeta = await getViewportMeta(tabId);
       screenshotCount++;
 
-      const patterns = await analyzeScreenshot(screenshot, tabId, `interact-${element.type}`);
+      const patterns = await analyzeScreenshot(
+        screenshot,
+        tabId,
+        `interact-${element.type}`,
+        vmeta.y,
+      );
 
       viewports.push({
         screenshot,
