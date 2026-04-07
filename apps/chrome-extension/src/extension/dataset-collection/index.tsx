@@ -2518,18 +2518,42 @@ export default function DatasetCollection() {
                       >
                         {/* Image display removed for Text-First strategy */}
 
-                        <Paragraph style={{ margin: 0 }}>
-                          <Text strong>Location: </Text>
-                          {pattern.location}
-                        </Paragraph>
-                        <Paragraph style={{ margin: '4px 0' }}>
-                          <Text strong>Description: </Text>
-                          {pattern.description}
-                        </Paragraph>
-                        <Paragraph style={{ margin: 0 }}>
-                          <Text strong>Evidence: </Text>
-                          <Text code>{pattern.evidence}</Text>
-                        </Paragraph>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div>
+                            <Text strong>Location: </Text>
+                            <Text type="secondary">{pattern.location || '—'}</Text>
+                          </div>
+
+                          <div>
+                            <Text strong>Description: </Text>
+                            <Paragraph
+                              style={{ margin: 0 }}
+                              ellipsis={{ rows: 2, expandable: true, symbol: 'more' }}
+                            >
+                              {pattern.description || '—'}
+                            </Paragraph>
+                          </div>
+
+                          <div>
+                            <Text strong>Evidence: </Text>
+                            <Paragraph
+                              style={{
+                                margin: 0,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                fontSize: 12,
+                                background: '#fafafa',
+                                border: '1px solid #f0f0f0',
+                                borderRadius: 6,
+                                padding: '8px 10px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                              }}
+                              ellipsis={{ rows: 3, expandable: true, symbol: 'more' }}
+                            >
+                              {pattern.evidence || '—'}
+                            </Paragraph>
+                          </div>
+                        </div>
                         {pattern.confidence !== undefined && (
                           <Text
                             type="secondary"

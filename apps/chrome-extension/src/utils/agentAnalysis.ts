@@ -13,7 +13,7 @@
  */
 
 import { autoLabelScreenshot, autoLabelDOMOnly, isImageSupportError } from './autoLabeling';
-import type { AutoLabel } from './datasetDB';
+import { enrichAutoLabel, type AutoLabel } from './datasetDB';
 import { getImageDimensions } from './coordinateUtils';
 import { groundAutoLabelsViewportRelative } from './domEvidenceGrounding';
 import { getActiveModelConfig } from './aiConfig';
@@ -223,6 +223,7 @@ async function analyzeScreenshot(
         scrollY,
         imgW,
         imgH,
+        { expectedScrollY: scrollY, viewportHeight: imgH },
       );
       console.log(`[agent] [${label}] DOM-only → ${labels.length} patterns`);
       return labels;
@@ -253,6 +254,7 @@ async function analyzeScreenshot(
           scrollY,
           imgW,
           imgH,
+          { expectedScrollY: scrollY, viewportHeight: imgH },
         );
         console.log(`[agent] [${label}] DOM-only fallback → ${labels.length} patterns`);
         return labels;
@@ -399,6 +401,24 @@ async function clickElement(tabId: number, element: InteractiveElement): Promise
 
 // ── Deduplication ──────────────────────────────────────────────────────────
 
+function keepPatternsForViewport(
+  patterns: AutoLabel[],
+  viewportIndex: number,
+  viewportHeight: number,
+): AutoLabel[] {
+  return patterns
+    .filter((p) => {
+      const bbox = p.bbox;
+      if (!bbox || bbox.length !== 4) return false;
+      const [, y, , h] = bbox;
+      if (!Number.isFinite(y) || !Number.isFinite(h) || h <= 0) return false;
+      // Strict viewport binding: only keep boxes that intersect this viewport image.
+      const boxBottom = y + h;
+      return boxBottom > 0 && y < viewportHeight;
+    })
+    .map((p) => ({ ...p, viewportIndex }));
+}
+
 function deduplicatePatterns(patterns: AutoLabel[]): AutoLabel[] {
   const seen = new Set<string>();
   return patterns.filter((p) => {
@@ -518,10 +538,15 @@ export async function runAgentLoop(
         `scan-${cap.index}`,
         cap.scrollY,
       );
+      const viewportBoundPatterns = keepPatternsForViewport(
+        patterns,
+        cap.index,
+        cap.viewportHeight,
+      );
 
       viewports.push({
         screenshot: cap.screenshot,
-        patterns,
+        patterns: viewportBoundPatterns,
         viewportWidth: cap.viewportWidth,
         viewportHeight: cap.viewportHeight,
         scrollY: cap.scrollY,
@@ -530,8 +555,8 @@ export async function runAgentLoop(
         phase: 'scan',
       });
 
-      agentSteps.push(`phase-2: viewport-${cap.index} → ${patterns.length} patterns`);
-      console.log(`[agent] Phase 2: Viewport ${cap.index} → ${patterns.length} patterns`);
+      agentSteps.push(`phase-2: viewport-${cap.index} → ${viewportBoundPatterns.length} patterns`);
+      console.log(`[agent] Phase 2: Viewport ${cap.index} → ${viewportBoundPatterns.length} patterns`);
     } catch (err) {
       console.error(`[agent] Phase 2: Viewport ${cap.index} analysis failed:`, err);
     }
@@ -576,10 +601,15 @@ export async function runAgentLoop(
         `interact-${element.type}`,
         vmeta.y,
       );
+      const viewportBoundPatterns = keepPatternsForViewport(
+        patterns,
+        viewports.length,
+        vmeta.h,
+      );
 
       viewports.push({
         screenshot,
-        patterns,
+        patterns: viewportBoundPatterns,
         viewportWidth: vmeta.w,
         viewportHeight: vmeta.h,
         scrollY: vmeta.y,
@@ -588,8 +618,8 @@ export async function runAgentLoop(
         phase: 'interact',
       });
 
-      agentSteps.push(`phase-4: ${element.type}("${element.description}") → ${patterns.length} patterns`);
-      console.log(`[agent] Phase 4: ${element.type}("${element.description}") → ${patterns.length} patterns`);
+      agentSteps.push(`phase-4: ${element.type}("${element.description}") → ${viewportBoundPatterns.length} patterns`);
+      console.log(`[agent] Phase 4: ${element.type}("${element.description}") → ${viewportBoundPatterns.length} patterns`);
     } catch (err) {
       console.warn(`[agent] Phase 3-4: Interaction failed for "${element.description}":`, err);
     }
@@ -599,6 +629,11 @@ export async function runAgentLoop(
   //  FINALIZE — Deduplicate and return
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onProgress('Finalizing results...');
+
+  // Ensure every stored label has location/description when evidence exists (Manual Review + per-viewport cards)
+  viewports.forEach((v) => {
+    v.patterns = v.patterns.map((p) => enrichAutoLabel(p));
+  });
 
   // Collect all patterns across all viewports, tagging them with their source viewport
   const allPatterns: AutoLabel[] = [];
@@ -633,5 +668,5 @@ export async function runAgentLoop(
 export async function agentPatternsToAutoLabels(
   patterns: AutoLabel[],
 ): Promise<AutoLabel[]> {
-  return patterns;
+  return patterns.map((p) => enrichAutoLabel(p));
 }

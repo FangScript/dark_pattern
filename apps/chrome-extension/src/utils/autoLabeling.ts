@@ -183,7 +183,9 @@ Return EXACTLY this schema:
       "category": "Exact Taxonomy Label",
       "bbox": [x, y, width, height],
       "confidence": 0.00,
-      "evidence": "Verbatim or near-verbatim visible UI text that proves the label (used to locate the element in the DOM for training boxes)"
+      "evidence": "Verbatim visible UI text PLUS nearby context so this instance is unique in this viewport (avoid generic label-only evidence)",
+      "location": "Short phrase with relative position + anchor (e.g. top-right product card near price, checkout header, sticky bottom banner, modal footer)",
+      "description": "1–2 sentences: why this qualifies as that dark pattern (not generic UI description)"
     }
   ]
 }
@@ -196,6 +198,11 @@ Rules:
 - No comments
 - No trailing commas
 
+EVIDENCE QUALITY RULES (MANDATORY):
+- Do NOT output generic evidence like "Add to Cart" alone.
+- Include nearby contextual text (price, discount line, section title, etc.).
+- Include relative position in location (top/middle/bottom + nearby anchor).
+
 If no patterns detected, return:
 
 {
@@ -205,42 +212,98 @@ If no patterns detected, return:
 // AI Response Schema
 interface AutoLabelingResponse {
   patterns: Array<{
-    category: string;
-    bbox: [number, number, number, number];
+    category?: string;
+    type?: string;
+    bbox?: [number, number, number, number] | null;
     confidence: number;
     description?: string;
     severity?: 'low' | 'medium' | 'high' | 'critical';
     location?: string;
     evidence?: string;
+    element_hint?: string | null;
   }>;
+  // Compatibility with strict single-object schemas
+  type?: string;
+  /** Some prompts use `confidence`, others `modelConfidence` */
+  confidence?: number;
+  modelConfidence?: number;
+  element_hint?: 'button' | 'text' | 'badge' | 'banner' | null;
+  bbox?: [number, number, number, number] | null;
+  description?: string | null;
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  evidence?: string | null;
+  location?: string | null;
+}
+
+function normalizeCategory(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  if (!v || v.toLowerCase() === 'none') return null;
+
+  const direct = DARK_PATTERN_TAXONOMY.find((cat) => cat.toLowerCase() === v.toLowerCase());
+  if (direct) return direct;
+
+  // Compatibility mapping for alternate label sets
+  const map: Record<string, string> = {
+    'scarcity': 'Scarcity & Popularity',
+    'social proof pressure': 'Scarcity & Popularity',
+    'forced continuity': 'Subscription Trap',
+    'hidden costs': 'Hidden Information',
+    'bait and switch': 'Misdirection',
+    'trick questions': 'Misdirection',
+    'privacy zuckering': 'Forced Registration',
+    'preselection': 'Bundling',
+    'hard to cancel': 'Roach Motel',
+    'visual interference': 'Interface Interference',
+  };
+
+  const mapped = map[v.toLowerCase()];
+  return mapped ?? null;
+}
+
+/** Human-readable placement when the model only returns element_hint */
+function elementHintToLocation(hint: string | undefined | null): string {
+  if (!hint) return '';
+  const h = hint.trim().toLowerCase();
+  const map: Record<string, string> = {
+    button: 'Clickable CTA / button area',
+    text: 'Inline text, label, or paragraph',
+    badge: 'Small badge, chip, or highlight',
+    banner: 'Banner, strip, or wide promotional block',
+  };
+  return map[h] || `UI region: ${hint}`;
 }
 
 /**
  * Validate and heuristically fix auto-label responses (especially from LM Studio models)
  */
 function validateAutoLabel(
-  label: AutoLabelingResponse['patterns'][0],
+  label: AutoLabelingResponse['patterns'][0] & { type?: string },
   modelName: string,
   imgWidth: number = 1920,
   imgHeight: number = 1080,
 ): AutoLabel | null {
-  // Validate category
-  const validCategory = DARK_PATTERN_TAXONOMY.find(
-    (cat) => cat.toLowerCase() === label.category.toLowerCase()
-  );
+  // Validate category (some models return "type" instead of "category")
+  const categoryRaw = label.category ?? label.type;
+  const normalizedCategory = normalizeCategory(categoryRaw);
+  const validCategory = normalizedCategory
+    ? DARK_PATTERN_TAXONOMY.find((cat) => cat.toLowerCase() === normalizedCategory.toLowerCase())
+    : null;
   
   if (!validCategory) {
-    debug(`Invalid category: ${label.category}`);
+    debug(`Invalid category: ${categoryRaw}`);
     return null;
   }
 
-  // Validate bbox
-  if (!label.bbox || !Array.isArray(label.bbox) || label.bbox.length !== 4) {
-    debug(`Invalid bbox: ${JSON.stringify(label.bbox)}`);
-    return null;
+  // BBox is optional in strict schemas; keep as text-only label when missing.
+  const hasValidBbox = Array.isArray(label.bbox) && label.bbox.length === 4;
+  let x = 0;
+  let y = 0;
+  let width = 0;
+  let height = 0;
+  if (hasValidBbox) {
+    [x, y, width, height] = label.bbox as [number, number, number, number];
   }
-
-  let [x, y, width, height] = label.bbox;
 
   // ── LM STUDIO HEURISTICS ──
   
@@ -248,56 +311,58 @@ function validateAutoLabel(
   // If all coordinates are <= 1000 but the image is much larger, it's likely normalized.
   // Note: Sometimes the prompt tricks it into Outputting [x, y, width, height] but STILL using the 0-1000 scale.
   // We check if it looks like a bounding box format first:
-  const allUnder1000 = x <= 1000 && y <= 1000 && width <= 1000 && height <= 1000;
-  if (allUnder1000 && (imgWidth > 1200 || imgHeight > 1200)) {
-    // If width/height are actually xmax/ymax coords (they are larger than x/y)
-    if (width > x && height > y) {
-      // Is it [xmin, ymin, xmax, ymax] or [ymin, xmin, ymax, xmax]?
-      // Let's assume the prompt failed and it output [xmin, ymin, xmax, ymax] normalized to 1000
-      const xmin = (x / 1000) * imgWidth;
-      const ymin = (y / 1000) * imgHeight;
-      const xmax = (width / 1000) * imgWidth;
-      const ymax = (height / 1000) * imgHeight;
-      x = xmin;
-      y = ymin;
-      width = xmax - xmin;
-      height = ymax - ymin;
-    } else {
-      // It's [x, y, width, height] but normalized to 1000
-      x = (x / 1000) * imgWidth;
-      y = (y / 1000) * imgHeight;
-      width = (width / 1000) * imgWidth;
-      height = (height / 1000) * imgHeight;
+  if (hasValidBbox) {
+    const allUnder1000 = x <= 1000 && y <= 1000 && width <= 1000 && height <= 1000;
+    if (allUnder1000 && (imgWidth > 1200 || imgHeight > 1200)) {
+      // If width/height are actually xmax/ymax coords (they are larger than x/y)
+      if (width > x && height > y) {
+        // Is it [xmin, ymin, xmax, ymax] or [ymin, xmin, ymax, xmax]?
+        // Let's assume the prompt failed and it output [xmin, ymin, xmax, ymax] normalized to 1000
+        const xmin = (x / 1000) * imgWidth;
+        const ymin = (y / 1000) * imgHeight;
+        const xmax = (width / 1000) * imgWidth;
+        const ymax = (height / 1000) * imgHeight;
+        x = xmin;
+        y = ymin;
+        width = xmax - xmin;
+        height = ymax - ymin;
+      } else {
+        // It's [x, y, width, height] but normalized to 1000
+        x = (x / 1000) * imgWidth;
+        y = (y / 1000) * imgHeight;
+        width = (width / 1000) * imgWidth;
+        height = (height / 1000) * imgHeight;
+      }
     }
-  }
 
-  // Heuristic 2: Absolute pixels but formatted as [xmin, ymin, xmax, ymax]
-  // In [x,y,w,h], width is a length. If the AI output an xmax coordinate instead, 
-  // 'width' would be an absolute coordinate near the right edge of the screen.
-  // Example: [100, 100, 1500, 800] -> xmax=1500 > imgWidth*0.5.
-  // If 'width' is extremely large AND larger than x, it's likely xmax.
-  if (width > x && height > y && width > imgWidth * 0.5 && x > 0) {
-    // If the difference creates a valid box, it was likely xmax/ymax
-    if (width <= imgWidth && height <= imgHeight) {
-      const xmax = width;
-      const ymax = height;
-      width = xmax - x;
-      height = ymax - y;
+    // Heuristic 2: Absolute pixels but formatted as [xmin, ymin, xmax, ymax]
+    // In [x,y,w,h], width is a length. If the AI output an xmax coordinate instead, 
+    // 'width' would be an absolute coordinate near the right edge of the screen.
+    // Example: [100, 100, 1500, 800] -> xmax=1500 > imgWidth*0.5.
+    // If 'width' is extremely large AND larger than x, it's likely xmax.
+    if (width > x && height > y && width > imgWidth * 0.5 && x > 0) {
+      // If the difference creates a valid box, it was likely xmax/ymax
+      if (width <= imgWidth && height <= imgHeight) {
+        const xmax = width;
+        const ymax = height;
+        width = xmax - x;
+        height = ymax - y;
+      }
     }
-  }
 
-  // Final sanity limits
-  x = Math.max(0, x);
-  y = Math.max(0, y);
-  width = Math.max(10, Math.min(width, imgWidth - x));
-  height = Math.max(10, Math.min(height, imgHeight - y));
+    // Final sanity limits
+    x = Math.max(0, x);
+    y = Math.max(0, y);
+    width = Math.max(10, Math.min(width, imgWidth - x));
+    height = Math.max(10, Math.min(height, imgHeight - y));
 
-  if (
-    width <= 0 ||
-    height <= 0
-  ) {
-    debug(`Invalid bbox values: [${x}, ${y}, ${width}, ${height}]`);
-    return null;
+    if (
+      width <= 0 ||
+      height <= 0
+    ) {
+      debug(`Invalid bbox values: [${x}, ${y}, ${width}, ${height}]`);
+      return null;
+    }
   }
 
   // Validate confidence
@@ -307,15 +372,29 @@ function validateAutoLabel(
     return null;
   }
 
+  const evidenceStr = (label.evidence ?? '').trim();
+  const descRaw = (label.description ?? '').trim();
+  const locRaw = (label.location ?? '').trim();
+  const hint = (label as { element_hint?: string | null }).element_hint;
+  const location =
+    locRaw ||
+    elementHintToLocation(typeof hint === 'string' ? hint : null) ||
+    (evidenceStr ? 'Region containing the quoted evidence (see Evidence)' : 'Visible in this viewport');
+  const description =
+    descRaw ||
+    (evidenceStr
+      ? `${validCategory}: manipulative copy shown in the UI — "${evidenceStr.length > 220 ? `${evidenceStr.slice(0, 220)}…` : evidenceStr}"`
+      : `${validCategory}: detected from visible UI (see category and evidence).`);
+
   return {
     category: validCategory,
-    bbox: [x, y, width, height],
+    bbox: hasValidBbox ? [x, y, width, height] : [0, 0, 0, 0],
     confidence,
     model: modelName,
-    description: label.description,
+    description,
     severity: label.severity || 'medium',
-    location: label.location,
-    evidence: label.evidence,
+    location,
+    evidence: evidenceStr || undefined,
   };
 }
 
@@ -523,8 +602,32 @@ If unsure, return fewer patterns rather than guessing.`,
       debug('Failed to get screenshot dimensions for heuristic parsing', e);
     }
 
+    const parsedPatterns: AutoLabelingResponse['patterns'] = [];
     if (response.content.patterns && Array.isArray(response.content.patterns)) {
-      for (const pattern of response.content.patterns) {
+      parsedPatterns.push(...response.content.patterns);
+    } else if (typeof response.content.type === 'string') {
+      // Support strict single-object output schema:
+      // { type, confidence OR modelConfidence, evidence, element_hint, bbox, description, location, severity }
+      const c =
+        typeof response.content.confidence === 'number'
+          ? response.content.confidence
+          : typeof response.content.modelConfidence === 'number'
+            ? response.content.modelConfidence
+            : 0;
+      parsedPatterns.push({
+        category: response.content.type,
+        confidence: c,
+        bbox: response.content.bbox ?? null,
+        description: response.content.description ?? undefined,
+        severity: response.content.severity,
+        evidence: response.content.evidence ?? undefined,
+        location: response.content.location ?? undefined,
+        element_hint: response.content.element_hint ?? undefined,
+      });
+    }
+
+    if (parsedPatterns.length > 0) {
+      for (const pattern of parsedPatterns) {
         const validated = validateAutoLabel(pattern, usedModelName, imgWidth, imgHeight);
         if (validated) {
           validatedLabels.push(validated);
@@ -540,6 +643,7 @@ If unsure, return fewer patterns rather than guessing.`,
         domGrounding.scrollY,
         imgWidth,
         imgHeight,
+        { expectedScrollY: domGrounding.scrollY, viewportHeight: imgHeight },
       );
     }
 

@@ -6,6 +6,45 @@
 import type { AutoLabel } from './datasetDB';
 
 export type BboxSource = 'dom' | 'vlm';
+type DocBox = [number, number, number, number];
+
+interface GroundingOptions {
+  expectedScrollY?: number;
+  viewportHeight?: number;
+}
+
+async function getPageScrollY(tabId: number): Promise<number> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => Math.round(window.scrollY || document.documentElement.scrollTop || 0),
+    });
+    return Number(results[0]?.result ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+async function scrollToYAndSettle(tabId: number, y: number, settleMs = 150): Promise<number> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (yy: number) => window.scrollTo({ top: yy, behavior: 'instant' as ScrollBehavior }),
+    args: [y],
+  });
+  await new Promise((r) => setTimeout(r, settleMs));
+  return getPageScrollY(tabId);
+}
+
+function overlapsViewport(
+  box: DocBox,
+  viewportTop: number,
+  viewportHeight: number,
+): boolean {
+  const [, boxTop, , boxHeight] = box;
+  const boxBottom = boxTop + boxHeight;
+  const viewportBottom = viewportTop + viewportHeight;
+  return boxBottom > viewportTop && boxTop < viewportBottom;
+}
 
 /**
  * Runs in the isolated world of the target page. Do not reference extension scope.
@@ -74,7 +113,11 @@ export function locateEvidenceBatchInPage(
                 const my = rect.top + rect.height / 2;
                 const dist = Math.hypot(mx - cx, my - cy);
                 const exactBonus = tc.includes(lowerFull) ? 1e6 : 0;
-                const score = exactBonus + area - dist * 2;
+                const viewportBottom = window.innerHeight;
+                const visibleHeight = Math.min(rect.bottom, viewportBottom) - Math.max(rect.top, 0);
+                const visibleBoost = visibleHeight > rect.height * 0.6 ? 5 : 0;
+                const distancePenalty = Math.abs(my - cy) * 0.002;
+                const score = exactBonus + area - dist * 2 - distancePenalty + visibleBoost;
                 const prev = scores.get(el) ?? -Infinity;
                 if (score > prev) {
                   scores.set(el, score);
@@ -158,14 +201,25 @@ export async function groundAutoLabelsViewportRelative(
   scrollY: number,
   imgWidth: number,
   imgHeight: number,
+  options: GroundingOptions = {},
 ): Promise<AutoLabel[]> {
   if (labels.length === 0) {
     return labels;
   }
 
   const evidenceList = labels.map((p) => (p.evidence || '').trim());
+  const expectedScrollY = options.expectedScrollY ?? scrollY;
+  const viewportHeight = options.viewportHeight ?? imgHeight;
 
-  let row: Array<[number, number, number, number] | null> | undefined;
+  let debugScrollY = await getPageScrollY(tabId);
+  if (Math.abs(debugScrollY - expectedScrollY) > 2) {
+    debugScrollY = await scrollToYAndSettle(tabId, expectedScrollY, 150);
+  }
+  if (Math.abs(debugScrollY - expectedScrollY) > 6) {
+    return labels.map((l) => ({ ...l, bboxSource: 'vlm' as BboxSource }));
+  }
+
+  let row: Array<DocBox | null> | undefined;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
@@ -173,7 +227,7 @@ export async function groundAutoLabelsViewportRelative(
       args: [evidenceList],
     });
     row = results[0]?.result as
-      | Array<[number, number, number, number] | null>
+      | Array<DocBox | null>
       | undefined;
   } catch {
     return labels.map((l) => ({ ...l, bboxSource: 'vlm' as BboxSource }));
@@ -188,6 +242,9 @@ export async function groundAutoLabelsViewportRelative(
     if (!b) {
       return { ...l, bboxSource: 'vlm' as BboxSource };
     }
+    if (!overlapsViewport(b, expectedScrollY, viewportHeight)) {
+      return { ...l, bboxSource: 'vlm' as BboxSource };
+    }
     const vp = groundingBoxToViewportRelative(b, scrollY, imgWidth, imgHeight);
     if (vp) {
       return { ...l, bbox: vp, bboxSource: 'dom' as BboxSource };
@@ -199,13 +256,28 @@ export async function groundAutoLabelsViewportRelative(
 export async function groundPatternsWithDOM<
   T extends {
     evidence: string;
-    bbox?: [number, number, number, number];
+    bbox?: DocBox;
     bboxSource?: BboxSource;
+    _debugScrollY?: number;
+    _expectedScrollY?: number;
   },
->(tabId: number, patterns: T[]): Promise<T[]> {
+>(
+  tabId: number,
+  patterns: T[],
+  options: GroundingOptions = {},
+): Promise<T[]> {
   if (patterns.length === 0) {
     return patterns;
   }
+
+  const expectedScrollY = options.expectedScrollY;
+  const viewportHeight = options.viewportHeight;
+  let debugScrollY = await getPageScrollY(tabId);
+  if (expectedScrollY !== undefined && Math.abs(debugScrollY - expectedScrollY) > 2) {
+    debugScrollY = await scrollToYAndSettle(tabId, expectedScrollY, 150);
+  }
+  const scrollMismatch =
+    expectedScrollY !== undefined && Math.abs(debugScrollY - expectedScrollY) > 6;
 
   const evidenceList = patterns.map((p) => (p.evidence || '').trim());
 
@@ -217,17 +289,26 @@ export async function groundPatternsWithDOM<
     });
 
     const row = results[0]?.result as
-      | Array<[number, number, number, number] | null>
+      | Array<DocBox | null>
       | undefined;
 
     if (!row || row.length !== patterns.length) {
-      return patterns.map((p) =>
-        Object.assign({}, p, { bboxSource: 'vlm' as BboxSource }),
-      );
+      return patterns.map((p) => Object.assign({}, p, {
+        bboxSource: 'vlm' as BboxSource,
+        _debugScrollY: debugScrollY,
+        _expectedScrollY: expectedScrollY,
+      }));
     }
 
     return patterns.map((p, i) => {
       const b = row[i];
+      if (scrollMismatch) {
+        return Object.assign({}, p, {
+          bboxSource: 'vlm' as BboxSource,
+          _debugScrollY: debugScrollY,
+          _expectedScrollY: expectedScrollY,
+        });
+      }
       const ok =
         b &&
         b.length === 4 &&
@@ -237,17 +318,31 @@ export async function groundPatternsWithDOM<
         Number.isFinite(b[3]) &&
         b[2] > 0 &&
         b[3] > 0;
-      if (ok) {
+      const inViewport =
+        ok &&
+        expectedScrollY !== undefined &&
+        viewportHeight !== undefined
+          ? overlapsViewport(b as DocBox, expectedScrollY, viewportHeight)
+          : true;
+      if (ok && inViewport) {
         return Object.assign({}, p, {
           bbox: b,
           bboxSource: 'dom' as BboxSource,
+          _debugScrollY: debugScrollY,
+          _expectedScrollY: expectedScrollY,
         });
       }
-      return Object.assign({}, p, { bboxSource: 'vlm' as BboxSource });
+      return Object.assign({}, p, {
+        bboxSource: 'vlm' as BboxSource,
+        _debugScrollY: debugScrollY,
+        _expectedScrollY: expectedScrollY,
+      });
     });
   } catch {
-    return patterns.map((p) =>
-      Object.assign({}, p, { bboxSource: 'vlm' as BboxSource }),
-    );
+    return patterns.map((p) => Object.assign({}, p, {
+      bboxSource: 'vlm' as BboxSource,
+      _debugScrollY: debugScrollY,
+      _expectedScrollY: expectedScrollY,
+    }));
   }
 }

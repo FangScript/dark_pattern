@@ -23,6 +23,7 @@ import {
   Card,
   Col,
   Divider,
+  Image,
   Input,
   Modal,
   Row,
@@ -33,11 +34,63 @@ import {
   message,
 } from 'antd';
 import { useState, useEffect } from 'react';
-import type { AutoLabel, DatasetEntry, VerifiedLabel } from '../../utils/datasetDB';
+import { enrichAutoLabel, type AutoLabel, type DatasetEntry, type VerifiedLabel } from '../../utils/datasetDB';
 import BboxEditor from './BboxEditor';
 import './LabelReviewPanel.less';
 
 const { Text, Title, Paragraph } = Typography;
+
+/**
+ * Controlled fields use `edited*`; empty string must not hide enriched `autoLabel.*`
+ * (React `??` only falls back for null/undefined, not "").
+ */
+function mergeEditedField(edited: string | undefined, auto: string | undefined): string {
+  const t = (edited ?? '').trim();
+  return t || (auto ?? '').trim();
+}
+
+/** Non-empty screenshot string (IndexedDB / imports sometimes store ""). */
+function pickScreenshotString(s: string | undefined): string | undefined {
+  if (typeof s !== 'string') return undefined;
+  const t = s.trim();
+  return t.length > 0 ? t : undefined;
+}
+
+function normalizeViewportIndex(v: number | undefined): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.floor(n);
+}
+
+/**
+ * Pick the best data URL for a pattern: viewport slot → entry thumbnail → any viewport.
+ * Avoids "no screenshot" when viewport index is off-by-one or thumbnail was not stored.
+ */
+function resolveScreenshotForPattern(
+  entry: DatasetEntry,
+  viewportIndex?: number,
+): string | undefined {
+  const vi = normalizeViewportIndex(viewportIndex);
+  const vsList = entry.viewport_screenshots;
+
+  if (vi !== undefined && vsList && vsList.length > 0) {
+    const fromSlot = pickScreenshotString(vsList[vi]?.screenshot);
+    if (fromSlot) return fromSlot;
+  }
+
+  const thumb = pickScreenshotString(entry.screenshot);
+  if (thumb) return thumb;
+
+  if (vsList && vsList.length > 0) {
+    for (const v of vsList) {
+      const s = pickScreenshotString(v?.screenshot);
+      if (s) return s;
+    }
+  }
+
+  return undefined;
+}
 
 // 18-category taxonomy
 const PATTERN_CATEGORIES = [
@@ -116,7 +169,11 @@ async function cropEvidence(
       ctx.fillStyle = 'rgba(255, 77, 79, 0.2)';
       ctx.fillRect(x, y, w, h);
 
-      resolve(canvas.toDataURL('image/png'));
+      try {
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(null);
+      }
     };
     img.onerror = () => resolve(null);
     img.src = screenshot;
@@ -141,7 +198,7 @@ interface ReviewItem {
   notes?: string;
 }
 
-/** Evidence image subcomponent — crops and displays the screenshot region. */
+/** Evidence image subcomponent — draws bbox overlay; falls back to full screenshot if canvas/decode fails. */
 function EvidenceImage({
   screenshot,
   bbox,
@@ -150,16 +207,48 @@ function EvidenceImage({
   bbox: [number, number, number, number];
 }) {
   const [src, setSrc] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!screenshot);
+  const [overlayFallback, setOverlayFallback] = useState(false);
 
   useEffect(() => {
-    if (!screenshot) { setLoading(false); return; }
-    cropEvidence(screenshot, bbox).then((result) => {
-      setSrc(result);
+    if (!screenshot) {
+      setSrc(null);
       setLoading(false);
-    });
+      setOverlayFallback(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setOverlayFallback(false);
+
+    cropEvidence(screenshot, bbox)
+      .then((result) => {
+        if (cancelled) return;
+        if (result) {
+          setSrc(result);
+          setOverlayFallback(false);
+        } else {
+          setSrc(screenshot);
+          setOverlayFallback(true);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSrc(screenshot);
+          setOverlayFallback(true);
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [screenshot, bbox?.join(',')]);
 
+  if (!screenshot) {
+    return <Text type="secondary" style={{ fontSize: '12px' }}>No screenshot available for this pattern.</Text>;
+  }
   if (loading) {
     return <Text type="secondary" style={{ fontSize: '12px' }}>Loading evidence image...</Text>;
   }
@@ -167,18 +256,26 @@ function EvidenceImage({
     return <Text type="secondary" style={{ fontSize: '12px' }}>No screenshot available for this pattern.</Text>;
   }
   return (
-    <img
-      src={src}
-      alt="Evidence"
-      style={{
-        width: '100%',
-        maxHeight: 220,
-        objectFit: 'contain',
-        borderRadius: 6,
-        border: '1px solid #f0f0f0',
-        background: '#fafafa',
-      }}
-    />
+    <>
+      {overlayFallback && (
+        <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 6 }}>
+          Showing full viewport image (bbox highlight unavailable — e.g. very large image or decode limit).
+        </Text>
+      )}
+      <Image
+        src={src}
+        alt="Evidence"
+        preview
+        style={{
+          width: '100%',
+          maxHeight: 340,
+          objectFit: 'contain',
+          borderRadius: 6,
+          border: '1px solid #f0f0f0',
+          background: '#fafafa',
+        }}
+      />
+    </>
   );
 }
 
@@ -190,34 +287,36 @@ export default function LabelReviewPanel({
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>(() => {
     // If the entry has verified_labels, use those to initialize the edit state
     if (entry.verified_labels && entry.verified_labels.length > 0) {
-      return entry.verified_labels.map((verifiedLabel, idx) => ({
-        id: `review-verified-${idx}`,
-        // Reconstruct a pseudo-autoLabel for the UI to display the base fields
-        autoLabel: {
+      return entry.verified_labels.map((verifiedLabel, idx) => {
+        const enriched = enrichAutoLabel({
           category: verifiedLabel.category,
           bbox: verifiedLabel.bbox,
-          confidence: 1.0, // verified labels are 100% confident
+          confidence: 1.0,
           model: 'human-verified',
-          severity: 'medium', // Fallback severity
+          severity: 'medium',
           location: verifiedLabel.location,
           description: verifiedLabel.description,
           evidence: verifiedLabel.evidence,
           viewportIndex: verifiedLabel.viewportIndex,
-        },
-        verified: verifiedLabel.verified,
-        editedBbox: verifiedLabel.bbox,
-        editedCategory: verifiedLabel.category,
-        editedLocation: verifiedLabel.location,
-        editedDescription: verifiedLabel.description,
-        editedEvidence: verifiedLabel.evidence,
-        notes: verifiedLabel.notes,
-      }));
+        });
+        return {
+          id: `review-verified-${idx}`,
+          autoLabel: enriched,
+          verified: verifiedLabel.verified,
+          editedBbox: verifiedLabel.bbox,
+          editedCategory: verifiedLabel.category,
+          editedLocation: enriched.location,
+          editedDescription: enriched.description,
+          editedEvidence: verifiedLabel.evidence,
+          notes: verifiedLabel.notes,
+        };
+      });
     }
 
-    // Otherwise, fallback to raw auto_labels
+    // Otherwise, fallback to raw auto_labels (enrich so Location/Description are never blank when Evidence exists)
     return (entry.auto_labels || []).map((autoLabel, idx) => ({
       id: `review-${idx}`,
-      autoLabel,
+      autoLabel: enrichAutoLabel(autoLabel),
       verified: null,
       editedBbox: undefined,
     }));
@@ -313,9 +412,9 @@ export default function LabelReviewPanel({
         reviewTimestamp: Date.now(),
         notes: item.notes,
         viewportIndex: item.autoLabel.viewportIndex ?? 0,
-        location: item.editedLocation ?? item.autoLabel.location,
-        description: item.editedDescription ?? item.autoLabel.description,
-        evidence: item.editedEvidence ?? item.autoLabel.evidence,
+        location: mergeEditedField(item.editedLocation, item.autoLabel.location),
+        description: mergeEditedField(item.editedDescription, item.autoLabel.description),
+        evidence: mergeEditedField(item.editedEvidence, item.autoLabel.evidence),
       }));
 
     if (verifiedLabels.length === 0) {
@@ -337,13 +436,8 @@ export default function LabelReviewPanel({
     ? reviewItems.find((item) => item.id === editingItemId)
     : null;
 
-  const getScreenshotForViewport = (viewportIndex?: number): string | undefined => {
-    if (viewportIndex !== undefined && entry.viewport_screenshots) {
-      const vs = entry.viewport_screenshots[viewportIndex];
-      if (vs?.screenshot) return vs.screenshot;
-    }
-    return entry.screenshot;
-  };
+  const getScreenshotForViewport = (viewportIndex?: number): string | undefined =>
+    resolveScreenshotForPattern(entry, viewportIndex);
 
   const getSeverityColor = (severity?: string) => {
     const map: Record<string, string> = {
@@ -492,7 +586,12 @@ export default function LabelReviewPanel({
                               style={{ marginTop: 4 }}
                               size="small"
                               placeholder="e.g. product card, checkout header..."
-                              value={item.editedLocation ?? (item.autoLabel.location || '')}
+                              value={mergeEditedField(item.editedLocation, item.autoLabel.location)}
+                              onFocus={() => {
+                                if (item.editedLocation === undefined) {
+                                  handleFieldChange(item.id, 'editedLocation', item.autoLabel.location || '');
+                                }
+                              }}
                               onChange={(e) => handleFieldChange(item.id, 'editedLocation', e.target.value)}
                             />
                           </div>
@@ -505,7 +604,12 @@ export default function LabelReviewPanel({
                               size="small"
                               rows={3}
                               placeholder="Describe why this is a dark pattern..."
-                              value={item.editedDescription ?? (item.autoLabel.description || '')}
+                              value={mergeEditedField(item.editedDescription, item.autoLabel.description)}
+                              onFocus={() => {
+                                if (item.editedDescription === undefined) {
+                                  handleFieldChange(item.id, 'editedDescription', item.autoLabel.description || '');
+                                }
+                              }}
                               onChange={(e) => handleFieldChange(item.id, 'editedDescription', e.target.value)}
                             />
                           </div>
@@ -548,7 +652,12 @@ export default function LabelReviewPanel({
                           size="small"
                           style={{ marginBottom: 8 }}
                           placeholder="Exact text or element that proves this pattern..."
-                          value={item.editedEvidence ?? (item.autoLabel.evidence || '')}
+                          value={mergeEditedField(item.editedEvidence, item.autoLabel.evidence)}
+                          onFocus={() => {
+                            if (item.editedEvidence === undefined) {
+                              handleFieldChange(item.id, 'editedEvidence', item.autoLabel.evidence || '');
+                            }
+                          }}
                           onChange={(e) => handleFieldChange(item.id, 'editedEvidence', e.target.value)}
                         />
                         <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>

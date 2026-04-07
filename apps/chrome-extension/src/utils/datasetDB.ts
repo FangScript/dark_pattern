@@ -9,6 +9,34 @@ const DB_NAME = 'dph_dataset';
 const DB_VERSION = 1;
 const DATASET_ENTRIES_STORE = 'dataset_entries';
 
+/**
+ * Fill missing location/description from evidence so UI and exports always have text.
+ * Safe to call multiple times (idempotent when fields already set).
+ */
+export function enrichAutoLabel(label: AutoLabel): AutoLabel {
+  const ev = (label.evidence || '').trim();
+  const loc = (label.location || '').trim();
+  const desc = (label.description || '').trim();
+  if (loc && desc) {
+    return { ...label, evidence: ev || label.evidence };
+  }
+  const cat = label.category || 'Dark pattern';
+  return {
+    ...label,
+    evidence: ev || undefined,
+    location:
+      loc ||
+      (ev
+        ? 'Where the quoted evidence appears in this viewport (see bbox if present)'
+        : 'Visible somewhere in this viewport'),
+    description:
+      desc ||
+      (ev
+        ? `${cat}: manipulative or high-pressure UI copy — "${ev.length > 300 ? `${ev.slice(0, 300)}…` : ev}"`
+        : `${cat}: detected; add a short rationale if you verify this label.`),
+  };
+}
+
 // Auto-label from AI model
 export interface AutoLabel {
   category: string;
@@ -499,12 +527,19 @@ export const exportForUITarsFineTuning = async (): Promise<Blob> => {
  * Convert AutoLabel to DarkPattern (for backward compatibility)
  */
 export function autoLabelToDarkPattern(autoLabel: AutoLabel): DarkPattern {
+  const ev = (autoLabel.evidence || '').trim();
+  const desc = (autoLabel.description || '').trim();
+  const loc = (autoLabel.location || '').trim();
   return {
     type: autoLabel.category,
-    description: autoLabel.description || '',
+    description:
+      desc ||
+      (ev ? `${autoLabel.category}: "${ev.length > 200 ? `${ev.slice(0, 200)}…` : ev}"` : ''),
     severity: autoLabel.severity || 'medium',
-    location: autoLabel.location || '',
-    evidence: autoLabel.evidence || '',
+    location:
+      loc ||
+      (ev ? 'Near the quoted evidence text in the viewport' : ''),
+    evidence: ev,
     confidence: autoLabel.confidence,
     bbox: autoLabel.bbox,
   };
@@ -514,12 +549,21 @@ export function autoLabelToDarkPattern(autoLabel: AutoLabel): DarkPattern {
  * Convert VerifiedLabel to DarkPattern
  */
 export function verifiedLabelToDarkPattern(verifiedLabel: VerifiedLabel): DarkPattern {
+  const ev = (verifiedLabel.evidence || '').trim();
+  const desc = (verifiedLabel.description || '').trim();
+  const loc = (verifiedLabel.location || '').trim();
   return {
     type: verifiedLabel.category,
-    description: verifiedLabel.description || '',
+    description:
+      desc ||
+      (ev
+        ? `${verifiedLabel.category}: "${ev.length > 200 ? `${ev.slice(0, 200)}…` : ev}"`
+        : ''),
     severity: 'medium',
-    location: verifiedLabel.location || '',
-    evidence: verifiedLabel.evidence || '',
+    location:
+      loc ||
+      (ev ? 'Near the quoted evidence text in the viewport' : ''),
+    evidence: ev,
     confidence: verifiedLabel.verified ? 1.0 : 0.0,
     bbox: verifiedLabel.bbox,
   };
@@ -538,7 +582,7 @@ export function getEffectivePatterns(entry: DatasetEntry): DarkPattern[] {
 
   // Otherwise, convert auto_labels to patterns
   if (entry.auto_labels && entry.auto_labels.length > 0) {
-    return entry.auto_labels.map(autoLabelToDarkPattern);
+    return entry.auto_labels.map((a) => autoLabelToDarkPattern(enrichAutoLabel(a)));
   }
 
   // Fallback to legacy patterns field

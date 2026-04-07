@@ -55,6 +55,7 @@ interface DetectedPattern {
   counterMeasure: string;
   scrollY?: number;                          // page scroll offset when screenshot was taken
   screenshotSize?: { width: number; height: number };
+  viewportIndex?: number;
 }
 
 interface LiveGuardDetectionResponse {
@@ -297,8 +298,8 @@ IMPORTANT: Return a JSON object with this exact structure:
       "type": "Pattern Type (e.g., 'FOMO / Urgency')",
       "description": "Brief description",
       "severity": "low|medium|high|critical",
-      "location": "Where on the page",
-      "evidence": "Exact or near-verbatim visible UI text that proves the pattern (used to locate the element in the page DOM)",
+      "location": "Where on the page (include relative position like top/middle/bottom and nearby anchor such as price/header/checkout/footer)",
+      "evidence": "Exact visible UI quote PLUS nearby context so the element is unique in this viewport (avoid generic labels alone)",
       "confidence": 0.0-1.0,
       "bbox": [x, y, width, height],
       "counterMeasure": "Actionable advice for user"
@@ -311,7 +312,12 @@ IMPORTANT: Return a JSON object with this exact structure:
   }
 }
 
-Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport image (x,y = top-left, width/height in the same scale). These are a fallback if text grounding fails; evidence text is the primary localization signal.`,
+Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport image (x,y = top-left, width/height in the same scale). These are a fallback if text grounding fails; evidence text is the primary localization signal.
+
+EVIDENCE QUALITY RULES (MANDATORY):
+- Avoid generic evidence like "Add to Cart" by itself.
+- Include nearby context (price, quantity, discount line, header label, etc.).
+- Include relative placement in either location or evidence.`,
           },
           {
             type: 'image_url',
@@ -376,6 +382,21 @@ Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport imag
       return true;
     });
   };
+
+  const keepPatternsForViewport = (
+    patterns: DetectedPattern[],
+    viewportHeight: number,
+    viewportIndex: number,
+  ): DetectedPattern[] =>
+    patterns
+      .filter((p) => {
+        const b = p.bbox;
+        if (!b || b.length !== 4) return false;
+        const [, y, , h] = b;
+        const boxBottom = y + h;
+        return Number.isFinite(y) && Number.isFinite(h) && h > 0 && boxBottom > 0 && y < viewportHeight;
+      })
+      .map((p) => ({ ...p, viewportIndex }));
 
   // ── Get screenshot dimensions ─────────────────────────────────────────────
   const getScreenshotSize = (dataUrl: string): Promise<{ width: number; height: number }> => {
@@ -456,9 +477,13 @@ Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport imag
         const patterns = await analyzeViewport(
           cap.screenshot, dom, url, cap.scrollY, cap.screenshotSize, `scan-${cap.index}`,
         );
-        const grounded = await groundPatternsWithDOM(tabId, patterns);
-        allPatterns.push(...grounded);
-        debug(`Phase 2: Viewport ${cap.index} → ${patterns.length} patterns (DOM-grounded where possible)`);
+        const grounded = await groundPatternsWithDOM(tabId, patterns, {
+          expectedScrollY: cap.scrollY,
+          viewportHeight: cap.screenshotSize.height,
+        });
+        const viewportBound = keepPatternsForViewport(grounded, cap.screenshotSize.height, cap.index);
+        allPatterns.push(...viewportBound);
+        debug(`Phase 2: Viewport ${cap.index} → ${viewportBound.length} patterns (strictly bound)`);
       }
 
       // ── PHASE 3 + 4: Interact + re-analyze ──────────────────────────────
@@ -483,9 +508,13 @@ Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport imag
           const patterns = await analyzeViewport(
             screenshot, dom, url, vmeta.y, screenshotSize, `interact-${el.type}`,
           );
-          const grounded = await groundPatternsWithDOM(tabId, patterns);
-          allPatterns.push(...grounded);
-          debug(`Phase 4: ${el.description} → ${patterns.length} patterns (DOM-grounded where possible)`);
+          const grounded = await groundPatternsWithDOM(tabId, patterns, {
+            expectedScrollY: vmeta.y,
+            viewportHeight: screenshotSize.height,
+          });
+          const viewportBound = keepPatternsForViewport(grounded, screenshotSize.height, rawCaptures.length + allPatterns.length);
+          allPatterns.push(...viewportBound);
+          debug(`Phase 4: ${el.description} → ${viewportBound.length} patterns (strictly bound)`);
         } catch (err) {
           console.warn(`[live-guard] Phase 4 failed for "${el.description}":`, err);
         }

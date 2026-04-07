@@ -133,3 +133,7 @@ tsconfig.build.tsbuildinfo
 .venv/
 model/venv/
 model/local_model/
+model/.venv_gemma/
+model/gemma-3-4b-it/
+model/*.safetensors
+model/*.bin
