@@ -1,4 +1,4 @@
-# Midscene.js - Complete Project Documentation
+# Dark Pattern Hunter — Project Documentation
 
 ## 📋 Table of Contents
 
@@ -20,7 +20,7 @@
 
 ## 🎯 Project Overview
 
-**Midscene.js** is a visual-driven AI automation framework that enables you to control web browsers, Android devices, iOS devices, and any interface using natural language. It uses visual language models (VLMs) to understand and interact with user interfaces by analyzing screenshots, eliminating the need for DOM selectors or semantic markups.
+**Dark Pattern Hunter** is a visual-driven AI automation framework that helps you control web browsers, Android devices, iOS devices, and other interfaces using natural language. It uses visual language models (VLMs) to understand and interact with user interfaces from screenshots, reducing reliance on brittle DOM selectors.
 
 ### Core Philosophy
 
@@ -51,7 +51,7 @@ Current Version: **0.30.8**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Midscene.js Ecosystem                     │
+│                 Dark Pattern Hunter stack                    │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
@@ -65,10 +65,9 @@ Current Version: **0.30.8**
 │         └──────────────────┼──────────────────┘              │
 │                            │                                   │
 │                    ┌───────▼────────┐                          │
-│                    │  Core Package │                           │
-│                    │  (@darkpatternhunter/  │                           │
-│                    │     core)     │                           │
-│                    └───────┬───────┘                          │
+│                    │  Core package  │                          │
+│                    │ @darkpatternhunter/core                    │
+│                    └───────┬────────┘                          │
 │                            │                                   │
 │         ┌──────────────────┼──────────────────┐              │
 │         │                  │                  │               │
@@ -111,10 +110,10 @@ Current Version: **0.30.8**
 
 ### Monorepo Organization
 
-Midscene uses a **monorepo** structure managed by **pnpm workspaces** and **Nx**:
+This repository uses a **monorepo** layout managed by **pnpm workspaces** and **Nx**:
 
 ```
-midscene/
+dark-pattern-hunter/
 ├── apps/                    # Application packages (UI apps)
 │   ├── report/             # Report visualization app
 │   ├── playground/         # Web playground app
@@ -153,7 +152,7 @@ midscene/
 
 #### `@darkpatternhunter/core` - Core Engine
 
-**Purpose**: The heart of Midscene.js, providing the core automation engine.
+**Purpose**: Core automation engine for Dark Pattern Hunter.
 
 **Key Features**:
 - AI agent implementation
@@ -248,19 +247,15 @@ import { IOSDevice } from '@darkpatternhunter/ios';
 
 #### `@darkpatternhunter/cli` - Command-Line Interface
 
-**Purpose**: CLI tool for running Midscene scripts.
+**Purpose**: Command-line tooling for YAML-driven automation and related workflows (when present in your workspace checkout).
 
-**Features**:
+**Features** (typical):
 - Run YAML scripts
 - Batch execution
 - HTTP server for reports
 - Interactive mode
 
-**Usage**:
-```bash
-midscene run script.yaml
-midscene serve
-```
+**Usage**: This fork’s published binaries may differ. Prefer `pnpm run` / Nx targets from the root `package.json`, and the `dph-playground` bin from `@darkpatternhunter/web` where applicable. For YAML execution, use the APIs under `@darkpatternhunter/core/yaml` from a small Node host script if no global CLI is installed.
 
 #### `@darkpatternhunter/visualizer` - Visualization Components
 
@@ -418,8 +413,8 @@ pnpm run dev
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/web-infra-dev/midscene.git
-cd midscene
+git clone https://github.com/darkpatternhunter/dark-pattern-hunter.git
+cd dark-pattern-hunter
 ```
 
 2. **Enable pnpm**:
@@ -555,7 +550,7 @@ pnpm run dev
 
 ### 1. Visual-Driven Automation
 
-Midscene uses visual language models to understand UI by analyzing screenshots:
+Dark Pattern Hunter uses visual language models to understand UI from screenshots:
 
 ```typescript
 // No DOM selectors needed!
@@ -650,10 +645,7 @@ steps:
     prompt: "the submit button"
 ```
 
-Run with CLI:
-```bash
-midscene run script.yaml
-```
+Run YAML flows via a host script or package script that invokes `@darkpatternhunter/core` (this workspace may not ship a separate global CLI).
 
 ### 5. Visual Reports
 
@@ -787,7 +779,7 @@ packages/[package-name]/
 
 ### Nx Configuration
 
-Midscene uses **Nx** for build orchestration:
+**Nx** orchestrates builds in this repo:
 
 - **Task Dependencies**: Automatically handles build order
 - **Caching**: Builds are cached for faster subsequent builds
@@ -813,8 +805,8 @@ Midscene uses **Nx** for build orchestration:
 1. **Fork the repository**
 2. **Clone your fork**:
    ```bash
-   git clone https://github.com/your-username/midscene.git
-   cd midscene
+   git clone https://github.com/your-username/dark-pattern-hunter.git
+   cd dark-pattern-hunter
    ```
 
 3. **Create a branch**:
@@ -899,7 +891,7 @@ pnpm run build
 **Solution**: Ensure `.env` file exists with valid API keys:
 ```env
 OPENAI_API_KEY="your_key"
-MIDSCENE_MODEL_NAME="gpt-4o-2024-08-06"
+# Model and provider keys: copy variable names and values from env.example (see `@darkpatternhunter/shared/env` for identifiers).
 ```
 
 #### 4. pnpm version mismatch
@@ -924,13 +916,13 @@ pnpm run build
 
 ### Documentation
 
-- **Official Website**: [https://midscenejs.com](https://midscenejs.com)
-- **API Reference**: [https://midscenejs.com/api.html](https://midscenejs.com/api.html)
-- **Examples**: [https://github.com/web-infra-dev/midscene-example](https://github.com/web-infra-dev/midscene-example)
+- **Official site & docs**: [https://darkpatternhunter.dev](https://darkpatternhunter.dev)
+- **API reference**: [https://darkpatternhunter.dev/api](https://darkpatternhunter.dev/api)
+- **Examples**: [https://github.com/darkpatternhunter/example](https://github.com/darkpatternhunter/example)
 
 ### Community
 
-- **GitHub**: [Dark Pattern Hunter](https://github.com/EquityAviator/FYP)
+- **GitHub**: [darkpatternhunter/dark-pattern-hunter](https://github.com/darkpatternhunter/dark-pattern-hunter)
 
 ---
 
@@ -1016,10 +1008,7 @@ steps:
     saveAs: products
 ```
 
-Run:
-```bash
-midscene run script.yaml
-```
+Run via your project’s script or core YAML API (see `@darkpatternhunter/core/yaml`).
 
 
 ---

@@ -24,7 +24,7 @@ This will:
 ### **Step 3: Reload Extension in Chrome**
 
 1. Open Chrome and go to `chrome://extensions/`
-2. Find your "Dark Pattern Hunter" or "Midscene" extension
+2. Find your **Dark Pattern Hunter** extension
 3. Click the **🔄 Reload** button (or toggle it off and on)
 4. OR click "Remove" and then "Load unpacked" again
 

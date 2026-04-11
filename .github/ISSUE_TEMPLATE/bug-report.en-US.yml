@@ -1,5 +1,5 @@
 name: '🐞 Bug Report'
-description: Report a Bug to Midscene
+description: Report a bug in Dark Pattern Hunter
 title: '[Bug]: '
 type: Bug
 body:
@@ -9,7 +9,7 @@ body:
         Thanks for taking the time to report this issue! Before submitting, please note:
 
          - Confirm that your problem cannot be solved by official documentation.
-         - Make sure you've searched in the [Issues](https://github.com/web-infra-dev/midscene/issues) and haven't found the same issue.
+         - Make sure you've searched in this repository's Issues and haven't found the same issue.
          - If it's an upsteam bug, please report it to the relevant repository, such as [UI-TARS](https://github.com/bytedance/UI-TARS), [playwright](https://github.com/microsoft/playwright) and [puppeteer](https://github.com/puppeteer/puppeteer).
 
   - type: textarea
@@ -37,7 +37,7 @@ body:
     id: repro
     attributes:
       label: Reproduce link
-      description: 'Please provide a minimal reproduction of the issue. You can fork from the the [midscene-example](https://github.com/web-infra-dev/midscene-example).'
+      description: 'Please provide a minimal reproduction (repo link, gist, or steps). A small fork of this project with the smallest change that fails is ideal.'
       placeholder: paste link here
     validations:
       required: true

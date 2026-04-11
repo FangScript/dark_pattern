@@ -1,5 +1,5 @@
 name: '💡 Feature Request'
-description: Submit a new feature request to Midscene
+description: Submit a new feature request to Dark Pattern Hunter
 title: '[Feature]: '
 type: Enhancement
 body:
@@ -9,7 +9,7 @@ body:
         Thanks for submitting new feature requests! Before submitting, please note:
 
          - Confirmed that this is a common feature and cannot be implemented through existing APIs.
-         - Make sure you searched in the [Issues](https://github.com/web-infra-dev/midscene/issues) and didn't find the same request.
+         - Make sure you searched in this repository's Issues and didn't find the same request.
 
   - type: textarea
     id: description

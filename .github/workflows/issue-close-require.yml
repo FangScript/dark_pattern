@@ -12,7 +12,6 @@ permissions:
 jobs:
   issue-close-require:
     runs-on: ubuntu-latest
-    if: github.repository == 'web-infra-dev/midscene'
     steps:
       - name: need reproduction
         uses: actions-cool/issues-helper@a610082f8ac0cf03e357eb8dd0d5e2ba075e017e # v3.6.0

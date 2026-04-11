@@ -1,8 +1,8 @@
-# Complete Codebase Analysis - Dark Pattern Hunter (Midscene.js)
+# Complete Codebase Analysis — Dark Pattern Hunter
 
 ## Executive Summary
 
-**Dark Pattern Hunter** (formerly Midscene.js) is a visual-driven AI automation framework that enables browser, Android, and iOS automation using natural language and visual understanding. The codebase is a **monorepo** built with TypeScript, React, and modern build tools.
+**Dark Pattern Hunter** is a visual-driven AI automation framework that enables browser, Android, and iOS automation using natural language and visual understanding. The codebase is a **monorepo** built with TypeScript, React, and modern build tools.
 
 **Current Version:** 0.30.8  
 **Package Manager:** pnpm 9.3.0  
@@ -85,7 +85,7 @@
 ### Root Level
 
 ```
-midscene/
+dark-pattern-hunter/
 ├── apps/                    # Application packages (UI apps)
 │   └── chrome-extension/     # Chrome extension (main app)
 │
@@ -243,7 +243,7 @@ packages/visualizer/src/
 ```typescript
 import { imageInfoOfBase64 } from '@darkpatternhunter/shared/img';
 import { getDebug } from '@darkpatternhunter/shared/logger';
-import { MIDSCENE_MODEL_NAME } from '@darkpatternhunter/shared/env';
+import { DPH_MODEL_NAME } from '@darkpatternhunter/shared/env';
 ```
 
 **Directory Structure:**
@@ -579,10 +579,10 @@ Navigation bar component:
 
 Defined in `packages/shared/src/env/types.ts`:
 
-- `MIDSCENE_OPENAI_API_KEY` - OpenAI API key
-- `MIDSCENE_OPENAI_BASE_URL` - Base URL (default: https://api.openai.com/v1)
-- `MIDSCENE_MODEL_NAME` - Model name (e.g., "gpt-4o")
-- `MIDSCENE_VL_MODE` - Vision mode (optional)
+- `DPH_OPENAI_API_KEY` - OpenAI API key
+- `DPH_OPENAI_BASE_URL` - Base URL (default: https://api.openai.com/v1)
+- `DPH_MODEL_NAME` - Model name (e.g., "gpt-4o")
+- `DPH_VL_MODE` - Vision mode (optional)
 - `OPENAI_API_KEY` - Alternative key name
 
 ### Configuration Flow

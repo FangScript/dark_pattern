@@ -435,10 +435,12 @@ useEffect(() => {
 **Optional Enhancement:** Add a helper to auto-detect if GPT-4o is configured:
 
 ```typescript
+import { DPH_MODEL_NAME } from '@darkpatternhunter/shared/env';
+
 // Check if GPT-4o is configured
 const isGPT4oConfigured = useMemo(() => {
   if (!config) return false;
-  const modelName = config[MIDSCENE_MODEL_NAME] || '';
+  const modelName = config[DPH_MODEL_NAME] || '';
   return modelName.includes('gpt-4o') || modelName.includes('gpt-4');
 }, [config]);
 ```

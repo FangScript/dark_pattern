@@ -89,6 +89,9 @@ importers:
       '@darkpatternhunter/web':
         specifier: workspace:*
         version: link:../../packages/web-integration
+      '@supabase/supabase-js':
+        specifier: ^2.102.0
+        version: 2.102.0(bufferutil@4.0.9)(utf-8-validate@6.0.5)
       '@types/file-saver':
         specifier: 2.0.7
         version: 2.0.7
@@ -161,7 +164,7 @@ importers:
         version: 4.2.2
       openai:
         specifier: 4.81.0
-        version: 4.81.0(ws@8.18.3)(zod@3.25.76)
+        version: 4.81.0(ws@8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5))(zod@3.25.76)
       tailwindcss:
         specifier: 4.1.11
         version: 4.1.11
@@ -2323,6 +2326,33 @@ packages:
   '@socket.io/component-emitter@3.1.2':
     resolution: {integrity: sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==}
 
+  '@supabase/auth-js@2.102.0':
+    resolution: {integrity: sha512-Iq9tdBTTPUelC/j7u9I/hs8gCiy44LYSw22N4TNSYEzb1oS98iytXDutWWyJATgYDRxParjeNm+Qmh9NSNFcVw==}
+    engines: {node: '>=20.0.0'}
+
+  '@supabase/functions-js@2.102.0':
+    resolution: {integrity: sha512-aPFSO9VTrC4hLo+jPErrhw+vMi/d8h3DrWSov2pO2AdD6r6oKmSPogI4f7oeHxvxnGl7B57IjtkZQDz/D151kQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@supabase/phoenix@0.4.0':
+    resolution: {integrity: sha512-RHSx8bHS02xwfHdAbX5Lpbo6PXbgyf7lTaXTlwtFDPwOIw64NnVRwFAXGojHhjtVYI+PEPNSWwkL90f4agN3bw==}
+
+  '@supabase/postgrest-js@2.102.0':
+    resolution: {integrity: sha512-XJNGEmdySm9bBMi7bz9lgx33tQCmgZIK8at9J1NG3/ri1XiGLAgSX0Mzfst1FkrovQCdh16NtD/Rg3di3P7UCw==}
+    engines: {node: '>=20.0.0'}
+
+  '@supabase/realtime-js@2.102.0':
+    resolution: {integrity: sha512-cTCJTDu4xVj90A2vNTNUpeinwdqnVXSLUkWnG9FEbAwq4Djh4vpSy9HBwb33UK/4cUM0p7F8IkieiwZejj9bRg==}
+    engines: {node: '>=20.0.0'}
+
+  '@supabase/storage-js@2.102.0':
+    resolution: {integrity: sha512-wfEv7RJvIKN/ALsmi8Bq7w/HsiqS8GFg7TlKlkYzqyUoiEbwZiiZaXWWnPdq+6ktga/Mh3xQ3KyXpeIQNh7azA==}
+    engines: {node: '>=20.0.0'}
+
+  '@supabase/supabase-js@2.102.0':
+    resolution: {integrity: sha512-k2Ney4KrhZvbeGXDA6yXx8LsI/zaBroJFXTUb4t1j/GPK7YoDp6v5AuldJfjb9cFq4agRihzC27lDO8LKFzBpA==}
+    engines: {node: '>=20.0.0'}
+
   '@svgr/babel-plugin-add-jsx-attribute@8.0.0':
     resolution: {integrity: sha512-b9MIk7yhdS1pMCZM8VeNfUlSKVRhsHZNMl5O9SfaX0l0t5wjdgu4IDzGB8bpnGBBOjGST3rRFVsaaEtI4W6f7g==}
     engines: {node: '>=14'}
@@ -2646,6 +2676,9 @@ packages:
 
   '@types/uuid@10.0.0':
     resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
@@ -4208,6 +4241,10 @@ packages:
   hyperdyperid@1.2.0:
     resolution: {integrity: sha512-Y93lCzHYgGWdrJ66yIktxiaGULYc6oGiABxhcO5AufBeOyoIdZF7bIfLaOrbM0iGIOXQQgxxRrFEnb+Y6w1n4A==}
     engines: {node: '>=10.18'}
+
+  iceberg-js@0.8.1:
+    resolution: {integrity: sha512-1dhVQZXhcHje7798IVM+xoo/1ZdVfzOMIc8/rgVSijRK38EDqOJoGula9N/8ZI5RD8QTxNQtK/Gozpr+qUqRRA==}
+    engines: {node: '>=20.0.0'}
 
   iconv-lite@0.4.24:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
@@ -6913,6 +6950,7 @@ packages:
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-fetch@3.6.20:
     resolution: {integrity: sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==}
@@ -9267,6 +9305,46 @@ snapshots:
 
   '@socket.io/component-emitter@3.1.2': {}
 
+  '@supabase/auth-js@2.102.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/functions-js@2.102.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/phoenix@0.4.0': {}
+
+  '@supabase/postgrest-js@2.102.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/realtime-js@2.102.0(bufferutil@4.0.9)(utf-8-validate@6.0.5)':
+    dependencies:
+      '@supabase/phoenix': 0.4.0
+      '@types/ws': 8.18.1
+      tslib: 2.8.1
+      ws: 8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@supabase/storage-js@2.102.0':
+    dependencies:
+      iceberg-js: 0.8.1
+      tslib: 2.8.1
+
+  '@supabase/supabase-js@2.102.0(bufferutil@4.0.9)(utf-8-validate@6.0.5)':
+    dependencies:
+      '@supabase/auth-js': 2.102.0
+      '@supabase/functions-js': 2.102.0
+      '@supabase/postgrest-js': 2.102.0
+      '@supabase/realtime-js': 2.102.0(bufferutil@4.0.9)(utf-8-validate@6.0.5)
+      '@supabase/storage-js': 2.102.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@svgr/babel-plugin-add-jsx-attribute@8.0.0(@babel/core@7.26.10)':
     dependencies:
       '@babel/core': 7.26.10
@@ -9585,6 +9663,10 @@ snapshots:
       '@types/send': 0.17.4
 
   '@types/uuid@10.0.0': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 18.19.118
 
   '@types/yauzl@2.10.3':
     dependencies:
@@ -11527,6 +11609,8 @@ snapshots:
 
   hyperdyperid@1.2.0: {}
 
+  iceberg-js@0.8.1: {}
+
   iconv-lite@0.4.24:
     dependencies:
       safer-buffer: 2.1.2
@@ -12531,6 +12615,21 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
+  openai@4.81.0(ws@8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5))(zod@3.25.76):
+    dependencies:
+      '@types/node': 18.19.62
+      '@types/node-fetch': 2.6.11
+      abort-controller: 3.0.0
+      agentkeepalive: 4.5.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    optionalDependencies:
+      ws: 8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - encoding
+
   openai@4.81.0(ws@8.18.3)(zod@3.24.3):
     dependencies:
       '@types/node': 18.19.62
@@ -12543,21 +12642,6 @@ snapshots:
     optionalDependencies:
       ws: 8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
       zod: 3.24.3
-    transitivePeerDependencies:
-      - encoding
-
-  openai@4.81.0(ws@8.18.3)(zod@3.25.76):
-    dependencies:
-      '@types/node': 18.19.62
-      '@types/node-fetch': 2.6.11
-      abort-controller: 3.0.0
-      agentkeepalive: 4.5.0
-      form-data-encoder: 1.7.2
-      formdata-node: 4.4.1
-      node-fetch: 2.7.0
-    optionalDependencies:
-      ws: 8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
-      zod: 3.25.76
     transitivePeerDependencies:
       - encoding
 

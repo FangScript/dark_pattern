@@ -50,7 +50,7 @@ The Pattern Hunter extension is a Chrome browser extension (Manifest V3) that pr
 
 - Chrome Extension Manifest V3: https://developer.chrome.com/docs/extensions/mv3/
 - Chrome DevTools Protocol: https://chromedevtools.github.io/devtools-protocol/
-- MidScene.js Documentation: https://midscenejs.com
+- Dark Pattern Hunter documentation: https://darkpatternhunter.dev
 
 ---
 
@@ -58,7 +58,7 @@ The Pattern Hunter extension is a Chrome browser extension (Manifest V3) that pr
 
 ### 2.1 Product Perspective
 
-Pattern Hunter is a Chrome extension built on top of the MidScene.js framework. It integrates with:
+Pattern Hunter is a Chrome extension built on the Dark Pattern Hunter (`@darkpatternhunter/*`) packages. It integrates with:
 
 - **Chrome Browser**: Uses Chrome DevTools Protocol for page control
 - **AI Models**: Supports multiple visual language models (UI-TARS, Qwen3-VL, Gemini, GPT-4o)
@@ -517,19 +517,19 @@ Export (JSONL Format)
 
 #### 5.3.1 IndexedDB Databases
 
-**1. `midscene_dataset` (Dataset Collection)**
+**1. `dph_dataset` (dataset collection)**
 - Store: `dataset_entries`
 - Key: `id` (string)
 - Data: DatasetEntry objects
 
-**2. `midscene-recorder` (Recorder)**
+**2. `dph-recorder` (recorder)**
 - Store: `recording-sessions`
 - Key: `id` (string)
 - Indexes: `createdAt`, `updatedAt`
 - Store: `config`
 - Key: `key` (string)
 
-**3. `midscene_bridge` (Bridge Mode)**
+**3. `dph_bridge` (bridge mode)**
 - Store: `bridge_messages`
 - Key: `id` (string)
 - Data: Bridge message objects

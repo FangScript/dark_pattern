@@ -63,7 +63,7 @@ This document provides an exhaustive technical analysis of the dataset collectio
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                    Storage Layer (IndexedDB)                         │   │
 │  │  ┌─────────────────────────────────────────────────────────────┐   │   │
-│  │  │  Database: midscene_dataset                                  │   │   │
+│  │  │  Database: dph_dataset                                  │   │   │
 │  │  │  ┌─────────────────────────────────────────────────────────┐ │   │   │
 │  │  │  │  Object Store: dataset_entries                         │ │   │   │
 │  │  │  │  - Key: id (string)                                    │ │   │   │
@@ -176,7 +176,7 @@ PHASE 3: STORAGE
            ▼
     ┌──────────────┐
     │storeDataset  │────►│ IndexedDB.put()
-    │Entry         │      │ midscene_dataset
+    │Entry         │      │ dph_dataset
     └──────┬───────┘      │ dataset_entries store
            │
            ▼
@@ -523,7 +523,7 @@ const [showBboxEditor, setShowBboxEditor] = useState(false);
 
 ```typescript
 // Database configuration constants
-const DB_NAME = 'midscene_dataset';           // Database name
+const DB_NAME = 'dph_dataset';           // Database name
 const DB_VERSION = 1;                          // Schema version
 const DATASET_ENTRIES_STORE = 'dataset_entries'; // Object store name
 ```
@@ -588,7 +588,7 @@ export class IndexedDBManager {
 │                    IndexedDB Schema                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Database: midscene_dataset                                     │
+│  Database: dph_dataset                                     │
 │  Version: 1                                                     │
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -1170,23 +1170,23 @@ const analyzePageForDarkPatterns = async (
  * Used for data extraction and query operations
  */
 export const VQA_MODEL_CONFIG_KEYS: IModelConfigKeys = {
-  modelName: MIDSCENE_VQA_MODEL_NAME,
-  socksProxy: MIDSCENE_VQA_OPENAI_SOCKS_PROXY,
-  httpProxy: MIDSCENE_VQA_OPENAI_HTTP_PROXY,
-  openaiBaseURL: MIDSCENE_VQA_OPENAI_BASE_URL,
-  openaiApiKey: MIDSCENE_VQA_OPENAI_API_KEY,
-  openaiExtraConfig: MIDSCENE_VQA_OPENAI_INIT_CONFIG_JSON,
-  openaiUseAzureDeprecated: MIDSCENE_VQA_OPENAI_USE_AZURE,
-  useAzureOpenai: MIDSCENE_VQA_USE_AZURE_OPENAI,
-  azureOpenaiScope: MIDSCENE_VQA_AZURE_OPENAI_SCOPE,
-  azureOpenaiKey: MIDSCENE_VQA_AZURE_OPENAI_KEY,
-  azureOpenaiEndpoint: MIDSCENE_VQA_AZURE_OPENAI_ENDPOINT,
-  azureOpenaiApiVersion: MIDSCENE_VQA_AZURE_OPENAI_API_VERSION,
-  azureOpenaiDeployment: MIDSCENE_VQA_AZURE_OPENAI_DEPLOYMENT,
-  azureExtraConfig: MIDSCENE_VQA_AZURE_OPENAI_INIT_CONFIG_JSON,
-  useAnthropicSdk: MIDSCENE_VQA_USE_ANTHROPIC_SDK,
-  anthropicApiKey: MIDSCENE_VQA_ANTHROPIC_API_KEY,
-  vlMode: MIDSCENE_VQA_VL_MODE,
+  modelName: DPH_VQA_MODEL_NAME,
+  socksProxy: DPH_VQA_OPENAI_SOCKS_PROXY,
+  httpProxy: DPH_VQA_OPENAI_HTTP_PROXY,
+  openaiBaseURL: DPH_VQA_OPENAI_BASE_URL,
+  openaiApiKey: DPH_VQA_OPENAI_API_KEY,
+  openaiExtraConfig: DPH_VQA_OPENAI_INIT_CONFIG_JSON,
+  openaiUseAzureDeprecated: DPH_VQA_OPENAI_USE_AZURE,
+  useAzureOpenai: DPH_VQA_USE_AZURE_OPENAI,
+  azureOpenaiScope: DPH_VQA_AZURE_OPENAI_SCOPE,
+  azureOpenaiKey: DPH_VQA_AZURE_OPENAI_KEY,
+  azureOpenaiEndpoint: DPH_VQA_AZURE_OPENAI_ENDPOINT,
+  azureOpenaiApiVersion: DPH_VQA_AZURE_OPENAI_API_VERSION,
+  azureOpenaiDeployment: DPH_VQA_AZURE_OPENAI_DEPLOYMENT,
+  azureExtraConfig: DPH_VQA_AZURE_OPENAI_INIT_CONFIG_JSON,
+  useAnthropicSdk: DPH_VQA_USE_ANTHROPIC_SDK,
+  anthropicApiKey: DPH_VQA_ANTHROPIC_API_KEY,
+  vlMode: DPH_VQA_VL_MODE,
 } as const;
 
 /**
@@ -1194,14 +1194,14 @@ export const VQA_MODEL_CONFIG_KEYS: IModelConfigKeys = {
  * Used for element location and bounding box detection
  */
 export const GROUNDING_MODEL_CONFIG_KEYS: IModelConfigKeys = {
-  modelName: MIDSCENE_GROUNDING_MODEL_NAME,
-  socksProxy: MIDSCENE_GROUNDING_OPENAI_SOCKS_PROXY,
-  httpProxy: MIDSCENE_GROUNDING_OPENAI_HTTP_PROXY,
-  openaiBaseURL: MIDSCENE_GROUNDING_OPENAI_BASE_URL,
-  openaiApiKey: MIDSCENE_GROUNDING_OPENAI_API_KEY,
-  openaiExtraConfig: MIDSCENE_GROUNDING_OPENAI_INIT_CONFIG_JSON,
+  modelName: DPH_GROUNDING_MODEL_NAME,
+  socksProxy: DPH_GROUNDING_OPENAI_SOCKS_PROXY,
+  httpProxy: DPH_GROUNDING_OPENAI_HTTP_PROXY,
+  openaiBaseURL: DPH_GROUNDING_OPENAI_BASE_URL,
+  openaiApiKey: DPH_GROUNDING_OPENAI_API_KEY,
+  openaiExtraConfig: DPH_GROUNDING_OPENAI_INIT_CONFIG_JSON,
   // ... Azure and Anthropic configs
-  vlMode: MIDSCENE_GROUNDING_VL_MODE,
+  vlMode: DPH_GROUNDING_VL_MODE,
 } as const;
 
 /**
@@ -1209,9 +1209,9 @@ export const GROUNDING_MODEL_CONFIG_KEYS: IModelConfigKeys = {
  * Used for task planning and action sequencing
  */
 export const PLANNING_MODEL_CONFIG_KEYS: IModelConfigKeys = {
-  modelName: MIDSCENE_PLANNING_MODEL_NAME,
+  modelName: DPH_PLANNING_MODEL_NAME,
   // ... similar structure
-  vlMode: MIDSCENE_PLANNING_VL_MODE,
+  vlMode: DPH_PLANNING_VL_MODE,
 } as const;
 ```
 

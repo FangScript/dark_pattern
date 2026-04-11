@@ -1,8 +1,8 @@
-# Midscene.js UI Customization Guide
+# Dark Pattern Hunter UI Customization Guide
 
 ## Overview
 
-Midscene.js uses a modern React-based UI architecture with the following technologies:
+Dark Pattern Hunter uses a modern React-based UI architecture with the following technologies:
 - **React + TypeScript** for components
 - **Ant Design (antd)** for UI components
 - **Less** for styling

@@ -39,7 +39,7 @@ output_resource/
 **/*/adapters/**/index.js
 
 src/
-midscene_run/
+dph_run/
 log/
 docs/
 tests/

@@ -58,9 +58,9 @@ export default defineConfig({
     [process.env.CI ? 'line' : 'list'],
     // [
     //   'json',
-    //   { outputFile: 'midscene_run/playwright-reporter/test-results.json' },
+    //   { outputFile: 'dph_run/playwright-reporter/test-results.json' },
     // ],
-    // ['html', { outputFolder: 'midscene_run/playwright-reporter' }],
+    // ['html', { outputFolder: 'dph_run/playwright-reporter' }],
     ['../src/playwright/reporter/index.ts'], // separate/merged
   ],
 });

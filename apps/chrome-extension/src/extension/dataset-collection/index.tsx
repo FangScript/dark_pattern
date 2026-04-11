@@ -34,7 +34,7 @@ import {
   message,
 } from 'antd';
 import dayjs from 'dayjs';
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGlobalAIConfig } from '../../hooks/useGlobalAIConfig';
 import { getAIConfig, getActiveModelConfig } from '../../utils/aiConfig';
 import { drawBboxesOnImage } from '../../utils/bboxOverlay';
@@ -47,6 +47,7 @@ import {
 import {
   type DarkPattern,
   type DatasetEntry,
+  type VerifiedLabel,
   clearDatasetEntries,
   deleteDatasetEntry,
   exportDatasetAsBundleZip,
@@ -276,6 +277,13 @@ export default function DatasetCollection() {
   });
   const [editingEntry, setEditingEntry] = useState<DatasetEntry | null>(null);
   const [showBboxEditor, setShowBboxEditor] = useState(false);
+  const effectivePatternsByEntry = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof getEffectivePatterns>>();
+    entries.forEach((entry) => {
+      m.set(entry.id, getEffectivePatterns(entry));
+    });
+    return m;
+  }, [entries]);
 
   // Use global AI configuration hook
   const { readyState } = useGlobalAIConfig();
@@ -292,22 +300,20 @@ export default function DatasetCollection() {
 
   const calculateStatistics = () => {
     const totalEntries = entries.length;
-    // FIX (Bug 2): Use getEffectivePatterns() which falls back to auto_labels
-    // when human-verified patterns (entry.patterns) are not yet set.
-    // Previously this always counted 0 for fresh AI scans.
-    const totalPatterns = entries.reduce(
-      (sum, e) => sum + getEffectivePatterns(e).length,
-      0,
-    );
+    const totalPatterns = entries.reduce((sum, e) => {
+      const patterns = effectivePatternsByEntry.get(e.id) || [];
+      return sum + patterns.length;
+    }, 0);
     const sitesWithPatterns = entries.filter(
-      (e) => getEffectivePatterns(e).length > 0,
+      (e) => (effectivePatternsByEntry.get(e.id) || []).length > 0,
     ).length;
     const prevalenceRate =
       totalEntries > 0 ? (sitesWithPatterns / totalEntries) * 100 : 0;
 
     const categoryBreakdown: Record<string, number> = {};
     entries.forEach((entry) => {
-      getEffectivePatterns(entry).forEach((pattern) => {
+      const patterns = effectivePatternsByEntry.get(entry.id) || [];
+      patterns.forEach((pattern) => {
         categoryBreakdown[pattern.type] =
           (categoryBreakdown[pattern.type] || 0) + 1;
       });
@@ -2078,8 +2084,22 @@ export default function DatasetCollection() {
         }),
       );
 
+      const verifiedLabels: VerifiedLabel[] = patternsWithCrops
+        .filter((p) => p.bbox && p.bbox.length === 4)
+        .map((p) => ({
+          category: p.type,
+          bbox: p.bbox as [number, number, number, number],
+          verified: true,
+          reviewTimestamp: Date.now(),
+          location: p.location,
+          description: p.description,
+          evidence: p.evidence,
+        }));
+
       const updatedEntry: DatasetEntry = {
         ...editingEntry,
+        status: 'verified',
+        verified_labels: verifiedLabels,
         patterns: patternsWithCrops,
       };
 
@@ -2467,6 +2487,8 @@ export default function DatasetCollection() {
       ) : (
         <List
           dataSource={filteredEntries}
+          rowKey={(entry) => entry.id}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
           renderItem={(entry) => (
             <List.Item>
               <Card style={{ width: '100%' }}>
@@ -2497,7 +2519,8 @@ export default function DatasetCollection() {
                 </div>
 
                 {(() => {
-                  const effectivePatterns = getEffectivePatterns(entry);
+                  const effectivePatterns =
+                    effectivePatternsByEntry.get(entry.id) || [];
                   return effectivePatterns.length === 0 ? (
                     <Tag color="green">No dark patterns detected</Tag>
                   ) : (

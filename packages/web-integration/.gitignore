@@ -1,5 +1,5 @@
 
-# Midscene.js dump files
-midscene_run/report
-midscene_run/dump
+# Run output (reports, dumps)
+dph_run/report
+dph_run/dump
 

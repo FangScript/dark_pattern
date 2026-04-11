@@ -9,15 +9,15 @@ assignees: ''
 
 ## Read this before open issue
 
-How to choose and config a model: https://midscenejs.com/model-provider.html
+How to choose and configure a model: https://darkpatternhunter.dev/choose-a-model
 
-Use this project to check the connection: https://github.com/web-infra-dev/midscene-example/tree/main/connectivity-test
+If you maintain a connectivity-test sample repo, link it here in your issue (there is no requirement to use a third-party example project).
 
 ## If the error persists, tell us these information
 
-- Where are you using Midscene.js (Chrome extension, yaml with cli, Puppeteer,…)
+- Where you are using Dark Pattern Hunter (Chrome extension, Playwright/Puppeteer, bridge mode, …)
 
-- The version of Midscene.js or Extension
+- The version or commit of this repository / extension build
 
 - The error message
 

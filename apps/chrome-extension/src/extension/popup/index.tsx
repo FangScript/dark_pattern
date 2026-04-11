@@ -15,8 +15,9 @@ import {
   useEnvConfig,
 } from '@darkpatternhunter/visualizer';
 import { ConfigProvider, Dropdown, Typography } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserExtensionPlayground } from '../../components/playground';
+import { getUserRole, restoreSession, type AppRole } from '../../lib/auth';
 import Bridge from '../bridge';
 import DatasetCollection from '../dataset-collection';
 import LiveGuard from '../live-guard';
@@ -42,22 +43,34 @@ const extensionAgentForTab = (forceSameTabNavigation = true) => {
 };
 
 const STORAGE_KEY = 'dph-popup-mode';
+type PopupMode =
+  | 'playground'
+  | 'bridge'
+  | 'recorder'
+  | 'dataset'
+  | 'live-guard'
+  | 'settings';
+const ADMIN_MODES: PopupMode[] = [
+  'playground',
+  'bridge',
+  'recorder',
+  'dataset',
+  'live-guard',
+  'settings',
+];
+const USER_MODES: PopupMode[] = ['live-guard', 'settings'];
+
+function getAllowedModes(role: AppRole): PopupMode[] {
+  return role === 'admin' ? ADMIN_MODES : USER_MODES;
+}
 
 export function PlaygroundPopup() {
   const { setPopupTab, config } = useEnvConfig();
-  const [currentMode, setCurrentMode] = useState<
-    'playground' | 'bridge' | 'recorder' | 'dataset' | 'live-guard' | 'settings'
-  >(() => {
+  const roleSyncInFlight = useRef(false);
+  const [role, setRole] = useState<AppRole>('guest');
+  const [currentMode, setCurrentMode] = useState<PopupMode>(() => {
     const savedMode = localStorage.getItem(STORAGE_KEY);
-    return (
-      (savedMode as
-        | 'playground'
-        | 'bridge'
-        | 'recorder'
-        | 'dataset'
-        | 'live-guard'
-        | 'settings') || 'playground'
-    );
+    return (savedMode as PopupMode) || 'playground';
   });
 
   // Sync popupTab with saved mode on mount
@@ -66,6 +79,45 @@ export function PlaygroundPopup() {
       setPopupTab(currentMode);
     }
   }, [currentMode]);
+
+  useEffect(() => {
+    const loadRole = async (restore = true) => {
+      if (roleSyncInFlight.current) return;
+      roleSyncInFlight.current = true;
+      try {
+        if (restore) {
+          await restoreSession();
+        }
+        const roleRes = await getUserRole();
+        const r = roleRes.success ? roleRes.data ?? 'guest' : 'guest';
+        setRole(r);
+      } finally {
+        roleSyncInFlight.current = false;
+      }
+    };
+    loadRole(true);
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      // Prevent restoreSession -> storage update -> onChanged -> restoreSession loops.
+      if (areaName !== 'local' || !changes.supabaseSession) return;
+      loadRole(false);
+    };
+    chrome.storage?.onChanged?.addListener(listener);
+    return () => {
+      chrome.storage?.onChanged?.removeListener(listener);
+    };
+  }, []);
+
+  useEffect(() => {
+    const allowed = getAllowedModes(role);
+    if (!allowed.includes(currentMode)) {
+      const fallback = role === 'admin' ? 'playground' : 'live-guard';
+      setCurrentMode(fallback);
+      localStorage.setItem(STORAGE_KEY, fallback);
+    }
+  }, [role, currentMode]);
 
   // Override AI configuration
   useEffect(() => {
@@ -114,7 +166,7 @@ export function PlaygroundPopup() {
     loadAndOverrideConfig();
   }, [config]); // Re-run if config changes (though usually we initiate this)
 
-  const menuItems = [
+  const allItems = [
     {
       key: 'playground',
       icon: <SendOutlined />,
@@ -177,8 +229,21 @@ export function PlaygroundPopup() {
       },
     },
   ];
+  const allowedModes = getAllowedModes(role);
+  const menuItems = allItems.filter(
+    (item: any) => item.type === 'divider' || allowedModes.includes(item.key as PopupMode),
+  );
 
   const renderContent = () => {
+    if (role !== 'admin' && currentMode !== 'live-guard' && currentMode !== 'settings') {
+      return (
+        <div className="popup-content live-guard-mode">
+          <div className="module-container">
+            <LiveGuard />
+          </div>
+        </div>
+      );
+    }
     if (currentMode === 'bridge') {
       return (
         <div className="popup-content bridge-mode">
@@ -219,7 +284,7 @@ export function PlaygroundPopup() {
       return (
         <div className="popup-content settings-mode">
           <div className="module-container">
-            <Settings />
+            <Settings role={role} />
           </div>
         </div>
       );

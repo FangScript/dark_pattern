@@ -308,7 +308,7 @@ describe('TaskCache', { timeout: 20000 }, () => {
     const cacheId = uuid();
     const uniqueDir = path.join(
       process.cwd(),
-      'midscene_run',
+      'dph_run',
       'cache',
       `test-cache-dir-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     );

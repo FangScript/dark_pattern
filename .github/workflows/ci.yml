@@ -22,7 +22,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-      MIDSCENE_MODEL_NAME: ${{ secrets.MIDSCENE_MODEL_NAME }}
+      DPH_MODEL_NAME: ${{ secrets.DPH_MODEL_NAME }}
 
     steps:
     - uses: actions/checkout@v4

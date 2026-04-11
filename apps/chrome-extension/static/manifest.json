@@ -10,7 +10,8 @@
     "debugger",
     "scripting",
     "downloads",
-    "storage"
+    "storage",
+    "identity"
   ],
   "incognito": "split",
   "background": {

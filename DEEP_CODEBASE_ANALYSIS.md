@@ -53,7 +53,7 @@ dark-pattern-hunter/
    - Returns structured JSON with patterns, severity, confidence
 
 3. **Data storage:**
-   - Stores entries in IndexedDB (`midscene_dataset` database)
+   - Stores entries in IndexedDB (`dph_dataset` database)
    - Each entry contains: URL, timestamp, screenshot, DOM, detected patterns, metadata
 
 4. **Website crawling:**
@@ -457,7 +457,7 @@ The `DARK_PATTERN_PROMPT` includes:
 ## 🗄️ Data Storage & Export
 
 ### **Storage (IndexedDB):**
-- **Database:** `midscene_dataset`
+- **Database:** `dph_dataset`
 - **Store:** `dataset_entries`
 - **Key:** `id` (unique per entry)
 - **Persistence:** Local browser storage (survives extension reloads)
@@ -522,7 +522,7 @@ pnpm run dev
 ### **Extension Loading:**
 1. Build: `pnpm run build` in `apps/chrome-extension`
 2. Load unpacked: `chrome://extensions/` → Load unpacked → Select `apps/chrome-extension/dist`
-3. Or use packaged ZIP: `extension_output/midscene-extension-v0.30.8.zip`
+3. Or use the packaged ZIP under `extension_output/` (name matches your build version)
 
 ---
 

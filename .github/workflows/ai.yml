@@ -21,10 +21,10 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.DOUBAO_TOKEN }}
       OPENAI_BASE_URL: ${{ secrets.DOUBAO_BASE_URL }}
-      MIDSCENE_MODEL_NAME: 'doubao-1-5-thinking-vision-pro-250428'
-      MIDSCENE_USE_DOUBAO_VISION: 1
+      DPH_MODEL_NAME: 'doubao-1-5-thinking-vision-pro-250428'
+      DPH_USE_DOUBAO_VISION: 1
       CI: 1
-      # MIDSCENE_DEBUG_AI_PROFILE: 1
+      # DPH_DEBUG_AI_PROFILE: 1
 
     steps:
     - uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: e2e-report
-        path: ${{ github.workspace }}/packages/web-integration/midscene_run/report
+        path: ${{ github.workspace }}/packages/web-integration/dph_run/report
         if-no-files-found: ignore
       
     - name: Run e2e tests cache
@@ -92,7 +92,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: e2e-cache-report
-        path: ${{ github.workspace }}/packages/web-integration/midscene_run/report
+        path: ${{ github.workspace }}/packages/web-integration/dph_run/report
         if-no-files-found: ignore
 
     - name: Run e2e tests report
@@ -105,7 +105,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: e2e-report-output
-        path: ${{ github.workspace }}/packages/web-integration/midscene_run/report
+        path: ${{ github.workspace }}/packages/web-integration/dph_run/report
         if-no-files-found: ignore
 
     - name: Check if script failed

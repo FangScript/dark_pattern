@@ -13,7 +13,6 @@ jobs:
   reply-labeled:
     name: Reply need reproduction
     runs-on: ubuntu-latest
-    if: github.repository == 'web-infra-dev/midscene'
     steps:
       - name: need reproduction
         if: github.event.label.name == 'need reproduction'

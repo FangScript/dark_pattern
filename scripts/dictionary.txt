@@ -124,7 +124,6 @@ vnode
 watchpack
 webm
 webp
-midscene
 mobilesafari
 dragfromtoforduration
 XCUI

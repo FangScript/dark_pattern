@@ -31,10 +31,22 @@ import {
   isLocalServerReachable,
   saveAIConfig,
 } from '../../utils/aiConfig';
+import {
+  getCurrentUser,
+  restoreSession,
+  signIn,
+  signInWithGoogle,
+  signOut,
+  signUp,
+} from '../../lib/auth';
 
 const { Title, Text, Paragraph } = Typography;
 
-export function Settings() {
+type SettingsProps = {
+  role?: 'admin' | 'user' | 'guest';
+};
+
+export function Settings({ role = 'guest' }: SettingsProps) {
   const [config, setConfig] = useState<AIConfig>({
     provider: AI_DEFAULTS.AI_PROVIDER,
     openaiApiKey: '',
@@ -46,11 +58,22 @@ export function Settings() {
   const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   // Load settings from storage on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
+        // Restore Supabase session (if any) and fetch current user
+        await restoreSession();
+        const userResult = await getCurrentUser();
+        if (userResult.success && userResult.data) {
+          setCurrentUserEmail(userResult.data.email ?? null);
+        }
+
         const loadedConfig = await getAIConfig();
         setConfig(loadedConfig);
 
@@ -183,13 +206,138 @@ export function Settings() {
     }
   };
 
+  const handleAuthSignIn = async () => {
+    if (!authEmail || !authPassword) {
+      message.error('Please enter email and password.');
+      return;
+    }
+    setAuthLoading(true);
+    const result = await signIn(authEmail.trim(), authPassword);
+    if (!result.success) {
+      message.error(result.error || 'Failed to sign in.');
+      setAuthLoading(false);
+      return;
+    }
+    const userRes = await getCurrentUser();
+    if (userRes.success) {
+      setCurrentUserEmail(userRes.data?.email ?? null);
+    }
+    message.success('Signed in successfully.');
+    setAuthLoading(false);
+  };
+
+  const handleAuthSignUp = async () => {
+    if (!authEmail || !authPassword) {
+      message.error('Please enter email and password.');
+      return;
+    }
+    setAuthLoading(true);
+    const result = await signUp(authEmail.trim(), authPassword);
+    if (!result.success) {
+      message.error(result.error || 'Failed to sign up.');
+      setAuthLoading(false);
+      return;
+    }
+    message.success('Sign-up successful. Please verify your email if required.');
+    setAuthLoading(false);
+  };
+
+  const handleAuthSignOut = async () => {
+    setAuthLoading(true);
+    const result = await signOut();
+    if (!result.success) {
+      message.error(result.error || 'Failed to sign out.');
+      setAuthLoading(false);
+      return;
+    }
+    setCurrentUserEmail(null);
+    message.success('Signed out.');
+    setAuthLoading(false);
+  };
+
+  const handleAuthGoogleSignIn = async () => {
+    setAuthLoading(true);
+    const result = await signInWithGoogle();
+    if (!result.success) {
+      message.error(result.error || 'Failed to sign in with Google.');
+      setAuthLoading(false);
+      return;
+    }
+    const userRes = await getCurrentUser();
+    if (userRes.success) {
+      setCurrentUserEmail(userRes.data?.email ?? null);
+    }
+    message.success('Signed in with Google.');
+    setAuthLoading(false);
+  };
+
   if (isLoading) {
     return <div>Loading settings...</div>;
   }
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {/* Supabase Authentication */}
+      <Card
+        title={
+          <Space>
+            <SettingOutlined />
+            <span>Account (Supabase)</span>
+          </Space>
+        }
+        bordered={false}
+      >
+        {currentUserEmail ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            <Text>
+              Signed in as <Text strong>{currentUserEmail}</Text>
+            </Text>
+            <Button onClick={handleAuthSignOut} loading={authLoading} danger>
+              Log out
+            </Button>
+          </Space>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            <Input
+              type="email"
+              placeholder="email@example.com"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+            />
+            <Input.Password
+              placeholder="Password"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+            />
+            <Space style={{ width: '100%', justifyContent: 'flex-start' }}>
+              <Button type="primary" onClick={handleAuthSignIn} loading={authLoading}>
+                Log in
+              </Button>
+              <Button onClick={handleAuthSignUp} loading={authLoading}>
+                Sign up
+              </Button>
+              <Button onClick={handleAuthGoogleSignIn} loading={authLoading}>
+                Google
+              </Button>
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Credentials are validated via Supabase using the public anon key. No secrets
+              are stored in the extension.
+            </Text>
+          </Space>
+        )}
+      </Card>
+
+      <Divider />
+      {role !== 'admin' && (
+        <Card bordered={false}>
+          <Text type="secondary">
+            Limited account: only Live Guard is available for this role.
+          </Text>
+        </Card>
+      )}
       {/* Provider Selection */}
+      {role === 'admin' && (
       <Card
         title={
           <Space>
@@ -229,11 +377,12 @@ export function Settings() {
           </Radio.Group>
         </Space>
       </Card>
+      )}
 
-      <Divider />
+      {role === 'admin' && <Divider />}
 
       {/* OpenAI Configuration */}
-      {config.provider === 'openai' && (
+      {role === 'admin' && config.provider === 'openai' && (
         <Card
           title={
             <Space>
@@ -265,7 +414,7 @@ export function Settings() {
       )}
 
       {/* Local AI Configuration */}
-      {config.provider === 'local' && (
+      {role === 'admin' && config.provider === 'local' && (
         <Card
           title={
             <Space>

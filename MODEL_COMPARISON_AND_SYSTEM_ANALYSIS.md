@@ -302,10 +302,10 @@ python -m ui_tars.server --port 8000
 ```typescript
 // In apps/chrome-extension/src/extension/popup/index.tsx
 const uiTarsConfig: Record<string, string> = {
-  [MIDSCENE_OPENAI_BASE_URL]: 'http://localhost:8000/v1',
-  [MIDSCENE_OPENAI_API_KEY]: 'not-needed',
-  [MIDSCENE_MODEL_NAME]: 'ui-tars-1.5-7b',
-  [MIDSCENE_VL_MODE]: 'vlm-ui-tars',
+  [DPH_OPENAI_BASE_URL]: 'http://localhost:8000/v1',
+  [DPH_OPENAI_API_KEY]: 'not-needed',
+  [DPH_MODEL_NAME]: 'ui-tars-1.5-7b',
+  [DPH_VL_MODE]: 'vlm-ui-tars',
 };
 ```
 

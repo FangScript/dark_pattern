@@ -107,7 +107,6 @@ for (const record of recordList) {
 
 ## 🤝 社区
 
-- [Web Infra 团队微信公众号](https://lf3-static.bytednsdoc.com/obj/eden-cn/vhaeh7vhabf/web-infra-wechat.jpg)
 - [飞书交流群](https://applink.larkoffice.com/client/chat/chatter/add_by_link?link_token=291q2b25-e913-411a-8c51-191e59aab14d)
 - [Discord](https://discord.gg/2JyBHxszE4)
 - [Follow us on X](https://x.com/darkpatternhunter)

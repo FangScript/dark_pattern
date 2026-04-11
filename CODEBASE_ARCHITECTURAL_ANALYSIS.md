@@ -302,17 +302,17 @@ The project uses a sophisticated multi-model configuration system:
 ```typescript
 // Model-specific environment keys
 VQA_MODEL_CONFIG_KEYS = {
-  modelName: MIDSCENE_VQA_MODEL_NAME,
+  modelName: DPH_VQA_MODEL_NAME,
   // ... 20+ config keys per model type
 }
 
 GROUNDING_MODEL_CONFIG_KEYS = {
-  modelName: MIDSCENE_GROUNDING_MODEL_NAME,
+  modelName: DPH_GROUNDING_MODEL_NAME,
   // ...
 }
 
 PLANNING_MODEL_CONFIG_KEYS = {
-  modelName: MIDSCENE_PLANNING_MODEL_NAME,
+  modelName: DPH_PLANNING_MODEL_NAME,
   // ...
 }
 ```

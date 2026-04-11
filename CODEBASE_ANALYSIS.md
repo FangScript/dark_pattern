@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-You're converting the **midscene.js** open-source automation framework into **Dark Pattern Hunter**, a specialized tool for detecting dark patterns in Pakistani e-commerce websites. The codebase already has significant dark pattern detection functionality built-in!
+**Dark Pattern Hunter** is a specialized tool for detecting dark patterns in Pakistani e-commerce websites, built on the `@darkpatternhunter/*` visual automation stack. The codebase already includes substantial dark-pattern detection functionality.
 
 ## Current State Analysis
 
@@ -153,22 +153,22 @@ You're converting the **midscene.js** open-source automation framework into **Da
 **Current Code (lines 64-72):**
 ```typescript
 const uiTarsConfig: Record<string, string> = {
-  [MIDSCENE_OPENAI_BASE_URL]: 'http://localhost:8000/v1',
-  [MIDSCENE_OPENAI_API_KEY]: 'not-needed',
+  [DPH_OPENAI_BASE_URL]: 'http://localhost:8000/v1',
+  [DPH_OPENAI_API_KEY]: 'not-needed',
   [OPENAI_API_KEY]: 'not-needed',
-  [MIDSCENE_MODEL_NAME]: 'ui-tars-1.5-7b',
-  [MIDSCENE_VL_MODE]: 'vlm-ui-tars',
+  [DPH_MODEL_NAME]: 'ui-tars-1.5-7b',
+  [DPH_VL_MODE]: 'vlm-ui-tars',
 };
 ```
 
 **Change to:**
 ```typescript
 const openAIConfig: Record<string, string> = {
-  [MIDSCENE_OPENAI_BASE_URL]: 'https://api.openai.com/v1', // or undefined for default
-  [MIDSCENE_OPENAI_API_KEY]: process.env.OPENAI_API_KEY || '', // Get from env or user input
+  [DPH_OPENAI_BASE_URL]: 'https://api.openai.com/v1', // or undefined for default
+  [DPH_OPENAI_API_KEY]: process.env.OPENAI_API_KEY || '', // Get from env or user input
   [OPENAI_API_KEY]: process.env.OPENAI_API_KEY || '',
-  [MIDSCENE_MODEL_NAME]: 'gpt-4o', // or 'gpt-4-vision-preview' for vision
-  [MIDSCENE_VL_MODE]: 'qwen-vl', // or undefined for non-VLM models
+  [DPH_MODEL_NAME]: 'gpt-4o', // or 'gpt-4-vision-preview' for vision
+  [DPH_VL_MODE]: 'qwen-vl', // or undefined for non-VLM models
 };
 ```
 
@@ -229,11 +229,11 @@ useEffect(() => {
     }
     
     const openAIConfig: Record<string, string> = {
-      [MIDSCENE_OPENAI_BASE_URL]: 'https://api.openai.com/v1',
-      [MIDSCENE_OPENAI_API_KEY]: apiKey,
+      [DPH_OPENAI_BASE_URL]: 'https://api.openai.com/v1',
+      [DPH_OPENAI_API_KEY]: apiKey,
       [OPENAI_API_KEY]: apiKey,
-      [MIDSCENE_MODEL_NAME]: 'gpt-4o', // Use GPT-4o for vision
-      [MIDSCENE_VL_MODE]: undefined, // GPT-4o handles vision natively
+      [DPH_MODEL_NAME]: 'gpt-4o', // Use GPT-4o for vision
+      [DPH_VL_MODE]: undefined, // GPT-4o handles vision natively
     };
     
     safeOverrideAIConfig(openAIConfig);
@@ -328,10 +328,10 @@ storeDatasetEntry()
 
 The system uses these environment variable keys (defined in `packages/shared/src/env/types.ts`):
 
-- `MIDSCENE_OPENAI_API_KEY` - OpenAI API key
-- `MIDSCENE_OPENAI_BASE_URL` - Base URL (default: https://api.openai.com/v1)
-- `MIDSCENE_MODEL_NAME` - Model name (e.g., "gpt-4o", "gpt-4-vision-preview")
-- `MIDSCENE_VL_MODE` - Vision mode (optional)
+- `DPH_OPENAI_API_KEY` - OpenAI API key
+- `DPH_OPENAI_BASE_URL` - Base URL (default: https://api.openai.com/v1)
+- `DPH_MODEL_NAME` - Model name (e.g., "gpt-4o", "gpt-4-vision-preview")
+- `DPH_VL_MODE` - Vision mode (optional)
 - `OPENAI_API_KEY` - Alternative key name (for compatibility)
 
 ## Testing Checklist
