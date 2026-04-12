@@ -14,9 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/darkpatternhunter/dark-pattern-hunter" target="_blank"><img src="https://img.shields.io/badge/GitHub-Dark%20Pattern%20Hunter-181717?style=flat-square" alt="GitHub"></a>
+  <a href="https://github.com/FangScript/dark_pattern" target="_blank"><img src="https://img.shields.io/badge/GitHub-dark__pattern-181717?style=flat-square" alt="GitHub"></a>
   <a href="https://img.shields.io/badge/License-MIT-blue?style=flat-square"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License"></a>
 </p>
+
+**本仓库**（[FangScript/dark_pattern](https://github.com/FangScript/dark_pattern)）为 Dark Pattern Hunter 项目代码。环境搭建、包结构与 API 说明见仓库内 **[PROJECT_README.md](./PROJECT_README.md)**。
 
 ## 案例
 
@@ -44,10 +46,9 @@
 - **缓存加速**：重放历史会话时复用缓存帧，加快回归检查。
 - **MCP 桥接**：允许 Web、Android 或桌面客户端直接访问自动化能力。
 
-### 三类 API
-- [交互 API](https://darkpatternhunter.dev/zh/api#interaction-methods)：模拟点击、拖动与跨平台手势。
-- [数据提取 API](https://darkpatternhunter.dev/zh/api#data-extraction)：捕获 UI 树中的结构化属性并标记可疑字段。
-- [实用 API](https://darkpatternhunter.dev/zh/api#utility-methods)：提供 `aiAssert()`、`aiLocate()`、`aiWaitFor()` 等调试工具。
+### API 与自动化接口
+- 交互、数据提取与辅助能力说明见 **[PROJECT_README.md](./PROJECT_README.md)**（*Packages Overview*、*API Overview*）。
+- 模型与服务商配置见仓库根目录 `env.example` 与源码中的 `@darkpatternhunter/shared/env`。
 
 ## 👉 无需代码，快速体验
 
@@ -57,13 +58,11 @@
 
 ## ✨ 视觉语言模型驱动
 
-Dark Pattern Hunter 联合 `Qwen3-VL`、`Doubao-1.6-vision`、`gemini-2.5-pro` 与 `UI-TARS` 等模型，依据截图和元数据发掘隐蔽的操控技巧。
+Dark Pattern Hunter 可对接 `Qwen3-VL`、`Doubao-1.6-vision`、`gemini-2.5-pro`、`UI-TARS` 等模型，依据截图和元数据发掘隐蔽的操控技巧。
 
 - 通过像素或标注区域定位目标。
 - 避免脆弱的 DOM 选择器，降低通用 LLM 的调用成本。
-- 将自托管开源模型与自动化管道保持同步。
-
-更多信息请查看 [选择 AI 模型](https://darkpatternhunter.dev/zh/choose-a-model)。
+- 将自托管或云端模型与自动化管道保持同步。
 
 ## 💡 两种风格的自动化
 
@@ -89,68 +88,56 @@ for (const record of recordList) {
 }
 ```
 
-> 结构化自动化最佳实践见 [博客 - 结构化 AI 自动化工作流](https://darkpatternhunter.dev/zh/blog/structured-workflows)。
-
 ## 👀 与其它工具比较
 
-- **视觉优先的检测**：Dark Pattern Hunter 着眼于用户实际看到的内容，而非仅靠 DOM 状态。
+- **视觉优先的检测**：着眼于用户实际看到的内容，而非仅靠 DOM 状态。
 - **审计友好的报告**：每次自动化都生成带注释的回放，方便合规团队审查。
 - **公平性聚焦**：在自动化流程中检测强制提示、续订陷阱等暗黑模式。
 - **JavaScript 友好**：平台提供自然的 JavaScript 接口。
 
 ## 📄 资源
 
-- 官网与文档：[https://darkpatternhunter.dev](https://darkpatternhunter.dev)
-- 示例项目：[https://github.com/darkpatternhunter/example](https://github.com/darkpatternhunter/example)
-- API 参考：[https://darkpatternhunter.dev/api](https://darkpatternhunter.dev/api)
-- GitHub：[https://github.com/darkpatternhunter/dark-pattern-hunter](https://github.com/darkpatternhunter/dark-pattern-hunter)
+- **本仓库**：[github.com/FangScript/dark_pattern](https://github.com/FangScript/dark_pattern)
+- **仓库内文档**：[PROJECT_README.md](./PROJECT_README.md)
+- **扩展构建**：[REBUILD_EXTENSION_GUIDE.md](./REBUILD_EXTENSION_GUIDE.md)
 
-## 🤝 社区
+## 🤝 参与贡献
 
-- [飞书交流群](https://applink.larkoffice.com/client/chat/chatter/add_by_link?link_token=291q2b25-e913-411a-8c51-191e59aab14d)
-- [Discord](https://discord.gg/2JyBHxszE4)
-- [Follow us on X](https://x.com/darkpatternhunter)
-
-  <img src="https://github.com/user-attachments/assets/211b05c9-3ccd-4f52-b798-f3a7f51330ed" alt="lark group link" width="300" />
+- 问题与建议请使用 [GitHub Issues](https://github.com/FangScript/dark_pattern/issues)。
+- 欢迎 Pull Request；若有 [CONTRIBUTING.md](./CONTRIBUTING.md) 请遵循其中说明。
 
 ## 📝 致谢
 
-我们感谢以下项目：
+我们感谢以下开源项目：
 
 - [Rsbuild](https://github.com/web-infra-dev/rsbuild) 和 [Rslib](https://github.com/web-infra-dev/rslib) 用于构建工具。
 - [UI-TARS](https://github.com/bytedance/ui-tars) 用于开源的 AI 模型 UI-TARS。
 - [Qwen-VL](https://github.com/QwenLM/Qwen-VL) 用于开源的视觉语言模型 Qwen-VL。
-- [scrcpy](https://github.com/Genymobile/scrcpy) 和 [yume-chan](https://github.com/yume-chan) 允许我们使用浏览器控制 Android 设备。
-- [appium-adb](https://github.com/appium/appium-adb) 用于 javascript 桥接 adb。
-- [appium-webdriveragent](https://github.com/appium/WebDriverAgent) 用于 javascript 操作 XCTest。
-- [YADB](https://github.com/ysbing/YADB) 用于提高文本输入的兼容性。
-- [Puppeteer](https://github.com/puppeteer/puppeteer) 用于浏览器自动化与控制。
-- [Playwright](https://github.com/microsoft/playwright) 用于浏览器自动化与控制和测试。
+- [scrcpy](https://github.com/Genymobile/scrcpy) 和 [yume-chan](https://github.com/yume-chan) 等用于 Android 相关能力。
+- [appium-adb](https://github.com/appium/appium-adb)、[appium-webdriveragent](https://github.com/appium/WebDriverAgent)、[YADB](https://github.com/ysbing/YADB)。
+- [Puppeteer](https://github.com/puppeteer/puppeteer) 与 [Playwright](https://github.com/microsoft/playwright) 用于浏览器自动化与测试。
 
 ## 📖 引用
 
-如果您在研究或项目中使用了 Dark Pattern Hunter，请引用：
-
 ```bibtex
-@software{DarkPatternHunter,
-  author = {Xiao Zhou, Tao Yu, YiBing Lin},
-  title = {Dark Pattern Hunter: AI-first automation to hunt dark patterns on web, Android, and iOS.},
+@software{DarkPatternHunterFYP,
+  title = {Dark Pattern Hunter: visual AI automation for dark-pattern detection},
   year = {2025},
   publisher = {GitHub},
-  url = {https://github.com/darkpatternhunter/dark-pattern-hunter}
+  url = {https://github.com/FangScript/dark_pattern}
 }
 ```
 
 ## ✨ Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=darkpatternhunter/dark-pattern-hunter&type=Date)](https://www.star-history.com/#darkpatternhunter/dark-pattern-hunter&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=FangScript/dark_pattern&type=Date)](https://www.star-history.com/#FangScript/dark_pattern&Date)
 
 ## 📝 授权许可
 
-Dark Pattern Hunter 遵循 [MIT 许可](https://github.com/darkpatternhunter/dark-pattern-hunter/blob/main/LICENSE)。
+本项目采用 [MIT 许可](./LICENSE)。
 
 ---
 
 <div align="center">
-  如果本项目对你有帮助或启发，请给我们一个 ⭐️
+  如果本项目对你有帮助，欢迎给仓库一个 ⭐️
 </div>

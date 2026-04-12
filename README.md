@@ -14,9 +14,11 @@ English | [简体中文](./README.zh.md)
 </p>
 
 <p align="center">
-  <a href="https://github.com/darkpatternhunter/dark-pattern-hunter" target="_blank"><img src="https://img.shields.io/badge/GitHub-Dark%20Pattern%20Hunter-181717?style=flat-square" alt="GitHub" /></a>
+  <a href="https://github.com/FangScript/dark_pattern" target="_blank"><img src="https://img.shields.io/badge/GitHub-dark__pattern-181717?style=flat-square" alt="GitHub" /></a>
   <a href="https://img.shields.io/badge/License-MIT-blue?style=flat-square"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" /></a>
 </p>
+
+**This repository** ([FangScript/dark_pattern](https://github.com/FangScript/dark_pattern)) is the Dark Pattern Hunter project codebase. Technical setup, package layout, and API notes live in **[PROJECT_README.md](./PROJECT_README.md)** in this repo.
 
 ## Showcases
 
@@ -44,10 +46,9 @@ English | [简体中文](./README.zh.md)
 - **Caching for Efficiency**: Replay historical sessions with cached frames to speed up regression checks.
 - **MCP Bridge**: Allow other clients to tap into the agent stack via web, Android, or desktop bridges.
 
-### Three kinds of APIs
-- [Interaction API](https://darkpatternhunter.dev/api#interaction-methods): simulate clicks, drags, and gestures across devices.
-- [Data Extraction API](https://darkpatternhunter.dev/api#data-extraction): capture structured UI attributes and annotate why a field was suspicious.
-- [Utility API](https://darkpatternhunter.dev/api#utility-methods): helpers such as `aiAssert()`, `aiLocate()`, and `aiWaitFor()` plus diagnostics.
+### APIs and automation surface
+- Interaction, data extraction, and utility helpers are documented alongside packages in **[PROJECT_README.md](./PROJECT_README.md)** (see *Packages Overview* and *API Overview*).
+- Model and provider configuration: see `env.example` and `@darkpatternhunter/shared/env` in the source tree.
 
 ## 👉 Zero-code Quick Experience
 
@@ -57,13 +58,11 @@ English | [简体中文](./README.zh.md)
 
 ## ✨ Driven by Visual Language Models
 
-Dark Pattern Hunter partners with models such as `Qwen3-VL`, `Doubao-1.6-vision`, `gemini-2.5-pro`, and `UI-TARS`. These models reason from screenshots and metadata to surface subtle UI tricks.
+Dark Pattern Hunter can use models such as `Qwen3-VL`, `Doubao-1.6-vision`, `gemini-2.5-pro`, and `UI-TARS`. These models reason from screenshots and metadata to surface subtle UI tricks.
 
 - Locate targets purely from pixels or annotated regions.
 - Avoid brittle DOM selectors and reduce costs compared to generic LLM calls.
-- Keep your open-source model collection in sync with the automation pipeline.
-
-Read more in [Choose a Model](https://darkpatternhunter.dev/choose-a-model).
+- Keep your open-source or hosted model endpoints in sync with the automation pipeline.
 
 ## 💡 Two Styles of Automation
 
@@ -89,8 +88,6 @@ for (const record of recordList) {
 }
 ```
 
-> For structured automation best practices, see [Blog - Structured AI Automation Workflows](https://darkpatternhunter.dev/blog/structured-workflows).
-
 ## 👀 Comparing to other projects
 
 - **Visual-first detection**: Dark Pattern Hunter reasons about what users actually see, not only DOM state.
@@ -100,56 +97,51 @@ for (const record of recordList) {
 
 ## 📄 Resources
 
-- Official Site and Docs: [https://darkpatternhunter.dev](https://darkpatternhunter.dev)
-- Sample Projects: [https://github.com/darkpatternhunter/example](https://github.com/darkpatternhunter/example)
-- API Reference: [https://darkpatternhunter.dev/api](https://darkpatternhunter.dev/api)
-- GitHub: [https://github.com/darkpatternhunter/dark-pattern-hunter](https://github.com/darkpatternhunter/dark-pattern-hunter)
+- **This repository**: [github.com/FangScript/dark_pattern](https://github.com/FangScript/dark_pattern)
+- **In-repo documentation**: [PROJECT_README.md](./PROJECT_README.md)
+- **Chrome extension build**: [REBUILD_EXTENSION_GUIDE.md](./REBUILD_EXTENSION_GUIDE.md)
 
-## 🤝 Community
+## 🤝 Contributing
 
-- [Discord](https://discord.gg/2JyBHxszE4)
-- [Follow us on X](https://x.com/darkpatternhunter)
-- [Lark Group(飞书交流群)](https://applink.larkoffice.com/client/chat/chatter/add_by_link?link_token=291q2b25-e913-411a-8c51-191e59aab14d)
+- [Open an issue](https://github.com/FangScript/dark_pattern/issues) for bugs or ideas.
+- Pull requests are welcome; see [CONTRIBUTING.md](./CONTRIBUTING.md) if present.
 
 ## 📝 Credits
 
-We would like to thank the following projects:
+We would like to thank the following open-source projects:
 
 - [Rsbuild](https://github.com/web-infra-dev/rsbuild) and [Rslib](https://github.com/web-infra-dev/rslib) for the build tool.
 - [UI-TARS](https://github.com/bytedance/ui-tars) for the open-source agent model UI-TARS.
 - [Qwen-VL](https://github.com/QwenLM/Qwen-VL) for the open-source VL model Qwen-VL.
-- [scrcpy](https://github.com/Genymobile/scrcpy) and [yume-chan](https://github.com/yume-chan) allow us to control Android devices with browser.
-- [appium-adb](https://github.com/appium/appium-adb) for the javascript bridge of adb.
-- [appium-webdriveragent](https://github.com/appium/WebDriverAgent) for the javascript operate XCTest。
-- [YADB](https://github.com/ysbing/YADB) for the yadb tool which improves the performance of text input.
-- [Puppeteer](https://github.com/puppeteer/puppeteer) for browser automation and control.
-- [Playwright](https://github.com/microsoft/playwright) for browser automation and control and testing.
+- [scrcpy](https://github.com/Genymobile/scrcpy) and [yume-chan](https://github.com/yume-chan) for Android device control from the browser toolchain.
+- [appium-adb](https://github.com/appium/appium-adb) for the JavaScript bridge to adb.
+- [appium-webdriveragent](https://github.com/appium/WebDriverAgent) for XCTest integration.
+- [YADB](https://github.com/ysbing/YADB) for improved text input performance.
+- [Puppeteer](https://github.com/puppeteer/puppeteer) and [Playwright](https://github.com/microsoft/playwright) for browser automation and testing.
 
 ## 📖 Citation
 
-If you use Dark Pattern Hunter in your research or project, please cite:
+If you use this project in research, you may cite:
 
 ```bibtex
-@software{DarkPatternHunter,
-  author = {Xiao Zhou, Tao Yu, YiBing Lin},
-  title = {Dark Pattern Hunter: AI-first automation to hunt dark patterns on web, Android, and iOS.},
+@software{DarkPatternHunterFYP,
+  title = {Dark Pattern Hunter: visual AI automation for dark-pattern detection},
   year = {2025},
   publisher = {GitHub},
-  url = {https://github.com/darkpatternhunter/dark-pattern-hunter}
+  url = {https://github.com/FangScript/dark_pattern}
 }
 ```
 
 ## ✨ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=darkpatternhunter/dark-pattern-hunter&type=Date)](https://www.star-history.com/#darkpatternhunter/dark-pattern-hunter&Date)
-
+[![Star History Chart](https://api.star-history.com/svg?repos=FangScript/dark_pattern&type=Date)](https://www.star-history.com/#FangScript/dark_pattern&Date)
 
 ## 📝 License
 
-Dark Pattern Hunter is [MIT licensed](https://github.com/darkpatternhunter/dark-pattern-hunter/blob/main/LICENSE).
+This project is [MIT licensed](./LICENSE).
 
 ---
 
 <div align="center">
-  If this project helps you or inspires you, please give us a ⭐️
+  If this project helps you, consider giving the repo a ⭐️
 </div>
