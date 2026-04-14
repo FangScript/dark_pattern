@@ -1,12 +1,9 @@
 /// <reference types="chrome" />
 import {
-  ApiOutlined,
   DatabaseOutlined,
   MenuOutlined,
   SafetyOutlined,
-  SendOutlined,
   SettingOutlined,
-  VideoCameraOutlined,
 } from '@ant-design/icons';
 import {
   EnvConfig,
@@ -16,12 +13,9 @@ import {
 } from '@darkpatternhunter/visualizer';
 import { ConfigProvider, Dropdown, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { BrowserExtensionPlayground } from '../../components/playground';
 import { getUserRole, restoreSession, type AppRole } from '../../lib/auth';
-import Bridge from '../bridge';
 import DatasetCollection from '../dataset-collection';
 import LiveGuard from '../live-guard';
-import Recorder from '../recorder';
 import { Settings } from '../settings';
 import './index.less';
 import {
@@ -31,29 +25,12 @@ import {
   MIDSCENE_VL_MODE,
   OPENAI_API_KEY,
 } from '@darkpatternhunter/shared/env';
-import {
-  ChromeExtensionProxyPage,
-  ChromeExtensionProxyPageAgent,
-} from '@darkpatternhunter/web/chrome-extension';
-
-// remember to destroy the agent when the tab is destroyed: agent.page.destroy()
-const extensionAgentForTab = (forceSameTabNavigation = true) => {
-  const page = new ChromeExtensionProxyPage(forceSameTabNavigation);
-  return new ChromeExtensionProxyPageAgent(page);
-};
-
 const STORAGE_KEY = 'dph-popup-mode';
 type PopupMode =
-  | 'playground'
-  | 'bridge'
-  | 'recorder'
   | 'dataset'
   | 'live-guard'
   | 'settings';
 const ADMIN_MODES: PopupMode[] = [
-  'playground',
-  'bridge',
-  'recorder',
   'dataset',
   'live-guard',
   'settings',
@@ -69,8 +46,11 @@ export function PlaygroundPopup() {
   const roleSyncInFlight = useRef(false);
   const [role, setRole] = useState<AppRole>('guest');
   const [currentMode, setCurrentMode] = useState<PopupMode>(() => {
-    const savedMode = localStorage.getItem(STORAGE_KEY);
-    return (savedMode as PopupMode) || 'playground';
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === 'playground' || raw === 'bridge' || raw === 'recorder') {
+      return 'dataset';
+    }
+    return (raw as PopupMode) || 'dataset';
   });
 
   // Sync popupTab with saved mode on mount
@@ -113,7 +93,7 @@ export function PlaygroundPopup() {
   useEffect(() => {
     const allowed = getAllowedModes(role);
     if (!allowed.includes(currentMode)) {
-      const fallback = role === 'admin' ? 'playground' : 'live-guard';
+      const fallback = role === 'admin' ? 'dataset' : 'live-guard';
       setCurrentMode(fallback);
       localStorage.setItem(STORAGE_KEY, fallback);
     }
@@ -168,36 +148,6 @@ export function PlaygroundPopup() {
 
   const allItems = [
     {
-      key: 'playground',
-      icon: <SendOutlined />,
-      label: 'Playground',
-      onClick: () => {
-        setCurrentMode('playground');
-        setPopupTab('playground');
-        localStorage.setItem(STORAGE_KEY, 'playground');
-      },
-    },
-    {
-      key: 'recorder',
-      label: 'Recorder (Preview)',
-      icon: <VideoCameraOutlined />,
-      onClick: () => {
-        setCurrentMode('recorder');
-        setPopupTab('recorder');
-        localStorage.setItem(STORAGE_KEY, 'recorder');
-      },
-    },
-    {
-      key: 'bridge',
-      icon: <ApiOutlined />,
-      label: 'Bridge Mode',
-      onClick: () => {
-        setCurrentMode('bridge');
-        setPopupTab('bridge');
-        localStorage.setItem(STORAGE_KEY, 'bridge');
-      },
-    },
-    {
       key: 'dataset',
       icon: <DatabaseOutlined />,
       label: 'Dataset Collection',
@@ -244,24 +194,6 @@ export function PlaygroundPopup() {
         </div>
       );
     }
-    if (currentMode === 'bridge') {
-      return (
-        <div className="popup-content bridge-mode">
-          <div className="module-container">
-            <Bridge />
-          </div>
-        </div>
-      );
-    }
-    if (currentMode === 'recorder') {
-      return (
-        <div className="popup-content recorder-mode">
-          <div className="module-container">
-            <Recorder />
-          </div>
-        </div>
-      );
-    }
     if (currentMode === 'dataset') {
       return (
         <div className="popup-content dataset-mode">
@@ -290,23 +222,7 @@ export function PlaygroundPopup() {
       );
     }
 
-    return (
-      <div className="popup-content">
-        {/* Playground Component */}
-        <div className="module-container playground-component">
-          <BrowserExtensionPlayground
-            getAgent={(forceSameTabNavigation?: boolean) => {
-              console.log(
-                'getAgent called with forceSameTabNavigation:',
-                forceSameTabNavigation,
-              );
-              return extensionAgentForTab(forceSameTabNavigation);
-            }}
-            showContextPreview={false}
-          />
-        </div>
-      </div>
-    );
+    return null;
   };
 
   return (
@@ -324,17 +240,11 @@ export function PlaygroundPopup() {
               <MenuOutlined className="nav-icon menu-trigger" />
             </Dropdown>
             <span className="nav-title">
-              {currentMode === 'playground'
-                ? 'Playground'
-                : currentMode === 'recorder'
-                  ? 'Recorder'
-                  : currentMode === 'bridge'
-                    ? 'Bridge Mode'
-                    : currentMode === 'dataset'
-                      ? 'Dataset Collection'
-                      : currentMode === 'live-guard'
-                        ? 'Live Guard'
-                        : 'Settings'}
+              {currentMode === 'dataset'
+                    ? 'Dataset Collection'
+                    : currentMode === 'live-guard'
+                      ? 'Live Guard'
+                      : 'Settings'}
             </span>
           </div>
           <div className="nav-right">

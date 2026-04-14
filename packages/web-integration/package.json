@@ -96,10 +96,8 @@
   },
   "scripts": {
     "dev": "npm run build && npx npm-watch",
-    "dev:server": "npm run build && ./bin/dph-playground",
     "build": "rslib build",
     "build:watch": "rslib build --watch",
-    "playground": "DEBUG=dph:* tsx demo/playground.ts",
     "test": "vitest --run",
     "test:u": "vitest --run -u",
     "test:ai": "AI_TEST_TYPE=web npm run test",
@@ -110,13 +108,9 @@
     "e2e:ui": "playwright test --config=tests/playwright.config.ts --ui",
     "e2e:ui:cache": "DPH_CACHE=true playwright test --config=tests/playwright.config.ts --ui"
   },
-  "bin": {
-    "dph-playground": "./bin/dph-playground"
-  },
-  "files": ["static", "dist", "iife-script", "README.md", "bin"],
+  "files": ["static", "dist", "iife-script", "README.md"],
   "dependencies": {
     "@darkpatternhunter/core": "workspace:*",
-    "@darkpatternhunter/playground": "workspace:*",
     "@darkpatternhunter/shared": "workspace:*",
     "cors": "^2.8.5",
     "dayjs": "^1.11.11",

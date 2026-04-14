@@ -123,7 +123,6 @@ const parseConfig = (configString: string) => {
 export type ServiceModeType = 'Server' | 'In-Browser' | 'In-Browser-Extension'; // | 'Extension';
 
 export type PopupTabType =
-  | 'playground'
   | 'bridge'
   | 'recorder'
   | 'dataset'
@@ -212,7 +211,7 @@ export const useEnvConfig = create<{
       set({ domIncluded });
       localStorage.setItem(DOM_INCLUDED_KEY, domIncluded.toString());
     },
-    popupTab: 'playground',
+    popupTab: 'bridge',
     setPopupTab: (tab: PopupTabType) => {
       set({ popupTab: tab });
     },

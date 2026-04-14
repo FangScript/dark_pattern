@@ -1004,7 +1004,7 @@ export default function DatasetCollection() {
 
   // FIX (Bug 8): Store textarea value in a ref instead of reading via
   // document.getElementById — avoids crashes when modal unmounts first.
-  const batchUrlInputRef = React.useRef<string>('');
+  const batchUrlInputRef = useRef<string>('');
 
   const handleBatchProcess = () => {
     batchUrlInputRef.current = '';

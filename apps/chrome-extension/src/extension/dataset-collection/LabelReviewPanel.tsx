@@ -149,7 +149,7 @@ async function cropEvidence(
   if (w <= 0 || h <= 0) return null;
 
   return new Promise((resolve) => {
-    const img = new Image();
+    const img = new window.Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.width;

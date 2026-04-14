@@ -1,5 +1,8 @@
-import { PlaygroundSDK } from '@darkpatternhunter/playground';
 import { useEffect, useState } from 'react';
+import {
+  checkRemoteAutomationServer,
+  getDefaultRemoteServerUrl,
+} from '../remote-server-client';
 import { useEnvConfig } from '../store/store';
 
 export const useServerValid = (shouldRun = true) => {
@@ -13,16 +16,10 @@ export const useServerValid = (shouldRun = true) => {
     Promise.resolve(
       (async () => {
         while (!interruptFlag) {
-          const playgroundSDK = new PlaygroundSDK({
-            type: 'remote-execution',
-          });
-          const status = await playgroundSDK.checkStatus();
-          if (status) {
-            setServerValid(true);
-          } else {
-            setServerValid(false);
-          }
-          // sleep 1s
+          const status = await checkRemoteAutomationServer(
+            getDefaultRemoteServerUrl(),
+          );
+          setServerValid(status);
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       })(),

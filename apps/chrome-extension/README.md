@@ -1,6 +1,6 @@
 # Dark Pattern Hunter Chrome DevTools
 
-Chrome extension version of the Dark Pattern Hunter tool, providing AI-powered dark pattern detection, browser automation, Bridge mode, and a Playground testing environment.
+Chrome extension version of the Dark Pattern Hunter tool, providing AI-powered dark pattern detection, browser automation, Bridge mode, Recorder, Dataset collection, and Live Guard.
 
 ## Development Guide
 

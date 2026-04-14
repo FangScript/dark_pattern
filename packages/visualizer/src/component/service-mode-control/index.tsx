@@ -1,9 +1,12 @@
-import { PlaygroundSDK } from '@darkpatternhunter/playground';
 import { Button, Tooltip } from 'antd';
 import type React from 'react';
 import { useEffect } from 'react';
 import { safeOverrideAIConfig } from '../../hooks/useSafeOverrideAIConfig';
 import { useServerValid } from '../../hooks/useServerValid';
+import {
+  getDefaultRemoteServerUrl,
+  postRemoteAutomationConfig,
+} from '../../remote-server-client';
 import { useEnvConfig } from '../../store/store';
 import { EnvConfig } from '../env-config';
 import { iconForStatus } from '../misc';
@@ -75,10 +78,12 @@ export const ServiceModeControl: React.FC<ServiceModeControlProps> = ({
   useEffect(() => {
     safeOverrideAIConfig(config, false, false); // Don't show error message in this component
     if (serviceMode === 'Server') {
-      const playgroundSDK = new PlaygroundSDK({
-        type: 'remote-execution',
+      void postRemoteAutomationConfig(
+        config as Record<string, unknown>,
+        getDefaultRemoteServerUrl(),
+      ).catch(() => {
+        /* best-effort sync */
       });
-      playgroundSDK.overrideConfig(config);
     }
   }, [config, serviceMode, serverValid]);
 

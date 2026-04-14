@@ -8,8 +8,17 @@ import type {
   StorageProvider,
 } from '../types';
 
-import { noReplayAPIs } from '@darkpatternhunter/playground';
 import { BLANK_RESULT } from '../utils/constants';
+
+const DATA_EXTRACTION_APIS = [
+  'aiQuery',
+  'aiBoolean',
+  'aiNumber',
+  'aiString',
+  'aiAsk',
+];
+const VALIDATION_APIS = ['aiAssert', 'aiWaitFor'];
+const noReplayAPIs = [...DATA_EXTRACTION_APIS, ...VALIDATION_APIS];
 import { allScriptsFromDump } from '../utils/replay-scripts';
 
 /**

@@ -12,7 +12,6 @@
   "dependencies": {
     "@ant-design/icons": "^5.3.1",
     "@darkpatternhunter/core": "workspace:*",
-    "@darkpatternhunter/playground": "workspace:*",
     "@darkpatternhunter/recorder": "workspace:*",
     "@darkpatternhunter/shared": "workspace:*",
     "@darkpatternhunter/visualizer": "workspace:*",

@@ -223,10 +223,19 @@ export const extractDefaultValue = (field: ZodType): unknown => {
 };
 
 import type { GroupedActionDump, WebUIContext } from '@darkpatternhunter/core';
-import type {
-  ExecutionOptions,
-  PlaygroundAgent,
-} from '@darkpatternhunter/playground';
+import type { Agent } from '@darkpatternhunter/core/agent';
+
+/** Agent passed into UniversalPlayground local execution flows. */
+export type PlaygroundAgent = Agent & Record<string, unknown>;
+
+/** Options for executing an action from the playground-style UI. */
+export interface ExecutionOptions {
+  deepThink?: boolean;
+  screenshotIncluded?: boolean;
+  domIncluded?: boolean | 'visible-only';
+  context?: unknown;
+  requestId?: string;
+}
 
 // result type
 export interface PlaygroundResult {
@@ -286,9 +295,6 @@ export interface FormValue {
   prompt?: string;
   params?: Record<string, unknown>;
 }
-
-// ExecutionOptions is imported from playground package to ensure consistency
-export type { ExecutionOptions };
 
 // progress callback type
 export type ProgressCallback = (

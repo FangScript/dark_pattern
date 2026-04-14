@@ -69,16 +69,12 @@ export const iconForStatus = (status: string) => {
   }
 };
 
-// server not ready error message
+// server not ready error message (Server mode expects a reachable HTTP automation backend)
 export const errorMessageServerNotReady = (
   <span>
-    Don&apos;t worry, just one more step to launch the playground server.
-    <br />
-    Please run one of the commands under the project directory:
-    <br />
-    a. <strong>npx dph-playground</strong>
-    <br />
-    b. <strong>npx --yes @darkpatternhunter/web</strong>
+    The automation server did not respond. If you use Server mode, start your
+    Node process that hosts the agent HTTP API, or switch to In-Browser /
+    In-Browser-Extension mode.
   </span>
 );
 
@@ -88,7 +84,7 @@ export const serverLaunchTip = (
 ) => (
   <div className="server-tip">
     <Alert
-      message="Playground Server Not Ready"
+      message="Automation server not ready"
       description={notReadyMessage}
       type="warning"
     />
