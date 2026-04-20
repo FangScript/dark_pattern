@@ -118,8 +118,8 @@ function getViewportPatterns(entry: DatasetEntry, vIdx: number, vs: any) {
   return vs.patterns || [];
 }
 
-export async function exportAsCOCO(): Promise<Blob> {
-  const entries = await getDatasetEntries();
+export async function exportAsCOCO(entries?: DatasetEntry[]): Promise<Blob> {
+  const data = entries ?? await getDatasetEntries();
   const zip = new JSZip();
   const imagesFolder = zip.folder('images');
 
@@ -145,7 +145,7 @@ export async function exportAsCOCO(): Promise<Blob> {
   let imageId = 0;
   let annotationId = 0;
 
-  for (const entry of entries) {
+  for (const entry of data) {
     // ── Prefer per-viewport screenshots (each is its own training image) ──
     if (entry.viewport_screenshots && entry.viewport_screenshots.length > 0) {
       for (let vIdx = 0; vIdx < entry.viewport_screenshots.length; vIdx++) {
@@ -281,9 +281,11 @@ export async function exportAsCOCO(): Promise<Blob> {
  *
  * Uses actual image dimensions for normalization (not CSS viewport dimensions)
  * to ensure correct coordinates on HiDPI/Retina screens.
+ *
+ * @param entries - Optional array of entries to export. If not provided, loads all from IndexedDB.
  */
-export async function exportAsYOLO(): Promise<Blob> {
-  const entries = await getDatasetEntries();
+export async function exportAsYOLO(entries?: DatasetEntry[]): Promise<Blob> {
+  const data = entries ?? await getDatasetEntries();
   const zip = new JSZip();
   const imagesFolder = zip.folder('images');
   const labelsFolder = zip.folder('labels');
@@ -291,8 +293,8 @@ export async function exportAsYOLO(): Promise<Blob> {
   const imagesList: string[] = [];
   let globalIndex = 0;
 
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
+  for (let i = 0; i < data.length; i++) {
+    const entry = data[i];
 
     // ── Prefer per-viewport screenshots ──
     if (entry.viewport_screenshots && entry.viewport_screenshots.length > 0) {
@@ -438,9 +440,13 @@ names: [${DARK_PATTERN_CATEGORIES.map((c) => `'${c.name}'`).join(', ')}]
  * Uses per-viewport screenshots when available so each viewport
  * is exported as a separate image with only its own patterns.
  * Falls back to single-screenshot export for legacy entries.
+ *
+ * @param entries - Optional array of entries to export. If not provided, loads all from IndexedDB.
  */
-export async function exportAnnotatedImages(): Promise<Blob> {
-  const entries = await getDatasetEntries();
+export async function exportAnnotatedImages(
+  entries?: DatasetEntry[],
+): Promise<Blob> {
+  const data = entries ?? await getDatasetEntries();
   const zip = new JSZip();
   const originalFolder = zip.folder('original');
   const annotatedFolder = zip.folder('annotated');
@@ -448,8 +454,8 @@ export async function exportAnnotatedImages(): Promise<Blob> {
   // Import the overlay function dynamically to avoid circular deps
   const { drawBboxesOnImage } = await import('./bboxOverlay');
 
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
+  for (let i = 0; i < data.length; i++) {
+    const entry = data[i];
     const baseName = sanitizeFilenameLocal(entry.id, `img_${i + 1}`);
     const viewportScreenshots = entry.viewport_screenshots;
 
@@ -540,7 +546,7 @@ export async function exportAnnotatedImages(): Promise<Blob> {
   }
 
   // Add manifest with per-viewport breakdown
-  const manifest = entries.map((e, i) => {
+  const manifest = data.map((e, i) => {
     const viewportScreenshots = e.viewport_screenshots;
     const hasViewports = viewportScreenshots && viewportScreenshots.length > 0;
 

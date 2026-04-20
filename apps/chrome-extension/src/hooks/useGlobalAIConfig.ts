@@ -73,6 +73,14 @@ export function useGlobalAIConfig() {
           newReadyState.isReady = true;
         }
       }
+      // Check if OpenRouter is configured
+      else if (loadedConfig.provider === 'openrouter') {
+        if (!loadedConfig.openrouterApiKey) {
+          newReadyState.errorMessage = 'OpenRouter API key not configured';
+        } else {
+          newReadyState.isReady = true;
+        }
+      }
       // Check if Local AI is configured
       else if (loadedConfig.provider === 'local') {
         if (!loadedConfig.localAiEnabled) {
@@ -194,6 +202,12 @@ export function useAIReadyState(): AIReadyState {
       if (loadedConfig.provider === 'openai') {
         if (!loadedConfig.openaiApiKey) {
           newReadyState.errorMessage = 'OpenAI API key not configured';
+        } else {
+          newReadyState.isReady = true;
+        }
+      } else if (loadedConfig.provider === 'openrouter') {
+        if (!loadedConfig.openrouterApiKey) {
+          newReadyState.errorMessage = 'OpenRouter API key not configured';
         } else {
           newReadyState.isReady = true;
         }

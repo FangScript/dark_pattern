@@ -7,13 +7,14 @@
 
 import { AIActionType } from '@darkpatternhunter/core/ai-model';
 import { callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
-import { globalModelConfigManager } from '@darkpatternhunter/shared/env';
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import type { ChatCompletionMessageParam } from 'openai/resources/index';
 import { useState, useCallback } from 'react';
 
 import type { DarkPattern, DatasetEntry } from './datasetDB';
 import { getDatasetEntries, storeDatasetEntry } from './datasetDB';
+import { getActiveModelConfig } from './aiConfig';
+import { executeWithRateLimit } from './rateLimiter';
 
 const debug = getDebug('analysis:engine');
 
@@ -346,15 +347,16 @@ ${entry.dom ? `\nDOM Structure (excerpt):\n${entry.dom.substring(0, 2000)}...` :
       },
     ];
 
-    // Call AI with retry logic
-    const response = await retryWithBackoff(async () => {
-      const modelConfig = globalModelConfigManager.getModelConfig('default');
-      return callAIWithObjectResponse<DarkPatternDetectionResponse>(
+    // Call AI with rate limiting and retry
+    const modelConfig = await getActiveModelConfig();
+    const response = await executeWithRateLimit(
+      () => callAIWithObjectResponse<DarkPatternDetectionResponse>(
         messages,
         AIActionType.EXTRACT_DATA,
         modelConfig,
-      );
-    }, maxRetries);
+      ),
+      { label: 'analysis-engine', maxRetries: 3 },
+    );
 
     // Convert AI response to DarkPattern array
     const darkPatterns = convertToDarkPatterns(response.content.patterns);
@@ -363,6 +365,7 @@ ${entry.dom ? `\nDOM Structure (excerpt):\n${entry.dom.substring(0, 2000)}...` :
     const confidenceScore = calculateConfidenceScore(darkPatterns);
 
     // Update entry with analysis results
+    const modelConfig = await getActiveModelConfig();
     const updatedEntry: DatasetEntry = {
       ...entry,
       patterns: darkPatterns,
@@ -375,7 +378,7 @@ ${entry.dom ? `\nDOM Structure (excerpt):\n${entry.dom.substring(0, 2000)}...` :
         ...entry.metadata,
         researchContext: {
           ...entry.metadata?.researchContext,
-          modelUsed: globalModelConfigManager.getModelConfig('default').modelName,
+          modelUsed: modelConfig.modelName,
           analysisVersion: '1.0',
         },
       },
