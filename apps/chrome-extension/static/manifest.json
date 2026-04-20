@@ -22,6 +22,8 @@
   },
   "host_permissions": [
     "<all_urls>",
+    "https://*.supabase.co/*",
+    "https://*.chromiumapp.org/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

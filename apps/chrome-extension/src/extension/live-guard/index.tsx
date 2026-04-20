@@ -22,8 +22,8 @@ import {
   isLocalServerReachable,
 } from '../../utils/aiConfig';
 import { getDarkPatternPrompt } from '../../utils/analysisEngine';
+import { normalizedQuadToNormXYWH } from '../../utils/coordinateMapping';
 import { captureTabScreenshot } from '../../utils/screenshotCapture';
-import { groundPatternsWithDOM } from '../../utils/domEvidenceGrounding';
 
 const { Title, Text, Paragraph } = Typography;
 const debug = getDebug('live-guard');
@@ -40,6 +40,34 @@ const LIVE_GUARD_MESSAGES = {
 const TARGET_VIEWPORT_WIDTH = 1280;
 const MAX_VIEWPORTS = 10;
 
+/**
+ * Hybrid VLM-first: bbox from the model in normalized 0–1000 space.
+ * Prefer [x1, y1, x2, y2] corners; accept legacy [x, y, width, height] normalized.
+ */
+function coerceLiveGuardBbox(
+  raw: [number, number, number, number] | undefined,
+): [number, number, number, number] {
+  if (!raw || raw.length !== 4) {
+    return [400, 400, 120, 120];
+  }
+  const [a, b, c, d] = raw;
+  const quadLike = c > a && d > b;
+  const xywhLike =
+    c > 0 &&
+    d > 0 &&
+    a >= 0 &&
+    b >= 0 &&
+    a + c <= 1000.5 &&
+    b + d <= 1000.5;
+  if (quadLike) {
+    return normalizedQuadToNormXYWH([a, b, c, d]);
+  }
+  if (xywhLike) {
+    return normalizedQuadToNormXYWH([a, b, a + c, b + d]);
+  }
+  return normalizedQuadToNormXYWH([a, b, c, d]);
+}
+
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface DetectedPattern {
@@ -50,7 +78,7 @@ interface DetectedPattern {
   evidence: string;
   confidence: number;
   bbox?: [number, number, number, number];
-  /** dom = bbox from text grounding; vlm = model bbox (fallback) */
+  /** vlm = model bbox (normalized pipeline); dom kept only for legacy payloads */
   bboxSource?: 'dom' | 'vlm';
   counterMeasure: string;
   scrollY?: number;                          // page scroll offset when screenshot was taken
@@ -263,6 +291,7 @@ export function LiveGuard() {
     scrollY: number,
     screenshotSize: { width: number; height: number },
     label: string,
+    viewportIndex: number,
   ): Promise<DetectedPattern[]> => {
     debug(`Analyzing viewport [${label}] scrollY=${scrollY}`);
 
@@ -291,17 +320,17 @@ This is a live scan for consumer protection. Focus on patterns that:
 
 For each detected pattern, provide a counterMeasure field with actionable advice for the user.
 
-IMPORTANT: Return a JSON object with this exact structure:
+IMPORTANT: Return STRICT JSON with this exact structure:
 {
   "patterns": [
     {
-      "type": "Pattern Type (e.g., 'FOMO / Urgency')",
+      "type": "Pattern Type — must be one of the 18-category taxonomy labels",
       "description": "Brief description",
       "severity": "low|medium|high|critical",
       "location": "Where on the page (include relative position like top/middle/bottom and nearby anchor such as price/header/checkout/footer)",
       "evidence": "Exact visible UI quote PLUS nearby context so the element is unique in this viewport (avoid generic labels alone)",
       "confidence": 0.0-1.0,
-      "bbox": [x, y, width, height],
+      "bbox": [x1, y1, x2, y2],
       "counterMeasure": "Actionable advice for user"
     }
   ],
@@ -312,7 +341,9 @@ IMPORTANT: Return a JSON object with this exact structure:
   }
 }
 
-Bounding boxes: use normalized coordinates 0-1000 relative to THIS viewport image (x,y = top-left, width/height in the same scale). These are a fallback if text grounding fails; evidence text is the primary localization signal.
+Bounding box (REQUIRED for every pattern):
+- "bbox" MUST be [x1, y1, x2, y2] in normalized 0–1000 coordinates relative to THIS screenshot only (corners of the tight UI region).
+- x1 < x2, y1 < y2, all values in [0, 1000]. Do NOT return an empty or degenerate box; if uncertain, estimate the best tight box anyway.
 
 EVIDENCE QUALITY RULES (MANDATORY):
 - Avoid generic evidence like "Add to Cart" by itself.
@@ -334,13 +365,19 @@ EVIDENCE QUALITY RULES (MANDATORY):
         modelConfig,
       );
 
-      // Tag each pattern with scroll metadata
-      return response.content.patterns.map(p => ({
-        ...p,
-        counterMeasure: p.counterMeasure || generateCounterMeasure(p),
-        scrollY,
-        screenshotSize,
-      }));
+      // Tag each pattern with scroll + viewport metadata (VLM-first, no DOM grounding)
+      return response.content.patterns.map((p) => {
+        const bbox = coerceLiveGuardBbox(p.bbox as [number, number, number, number] | undefined);
+        return {
+          ...p,
+          bbox,
+          bboxSource: 'vlm' as const,
+          counterMeasure: p.counterMeasure || generateCounterMeasure(p),
+          scrollY,
+          screenshotSize,
+          viewportIndex,
+        };
+      });
     } catch (err) {
       debug(`[${label}] AI analysis failed:`, err);
       return [];
@@ -385,7 +422,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
 
   const keepPatternsForViewport = (
     patterns: DetectedPattern[],
-    viewportHeight: number,
+    _viewportHeightPx: number,
     viewportIndex: number,
   ): DetectedPattern[] =>
     patterns
@@ -394,7 +431,15 @@ EVIDENCE QUALITY RULES (MANDATORY):
         if (!b || b.length !== 4) return false;
         const [, y, , h] = b;
         const boxBottom = y + h;
-        return Number.isFinite(y) && Number.isFinite(h) && h > 0 && boxBottom > 0 && y < viewportHeight;
+        // b is normalized [x, y, w, h] in 0–1000 after coerceLiveGuardBbox
+        return (
+          Number.isFinite(y) &&
+          Number.isFinite(h) &&
+          h > 0 &&
+          boxBottom > 0 &&
+          y < 1000 &&
+          boxBottom <= 1000.5
+        );
       })
       .map((p) => ({ ...p, viewportIndex }));
 
@@ -475,13 +520,19 @@ EVIDENCE QUALITY RULES (MANDATORY):
         await scrollToY(tabId, cap.scrollY);
         const dom = await getDOMText(tabId);
         const patterns = await analyzeViewport(
-          cap.screenshot, dom, url, cap.scrollY, cap.screenshotSize, `scan-${cap.index}`,
+          cap.screenshot,
+          dom,
+          url,
+          cap.scrollY,
+          cap.screenshotSize,
+          `scan-${cap.index}`,
+          cap.index,
         );
-        const grounded = await groundPatternsWithDOM(tabId, patterns, {
-          expectedScrollY: cap.scrollY,
-          viewportHeight: cap.screenshotSize.height,
-        });
-        const viewportBound = keepPatternsForViewport(grounded, cap.screenshotSize.height, cap.index);
+        const viewportBound = keepPatternsForViewport(
+          patterns,
+          cap.screenshotSize.height,
+          cap.index,
+        );
         allPatterns.push(...viewportBound);
         debug(`Phase 2: Viewport ${cap.index} → ${viewportBound.length} patterns (strictly bound)`);
       }
@@ -494,6 +545,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
       const interactiveEls = await findInteractiveElements(tabId);
       debug(`Phase 3: Found ${interactiveEls.length} interactive elements`);
 
+      let interactViewportSeq = rawCaptures.length;
       for (const el of interactiveEls) {
         setScanProgress(`Phase 3: Clicking "${el.description}"…`);
         const clicked = await clickInteractiveElement(tabId, el);
@@ -506,13 +558,20 @@ EVIDENCE QUALITY RULES (MANDATORY):
           const screenshotSize = await getScreenshotSize(screenshot);
           const dom = await getDOMText(tabId);
           const patterns = await analyzeViewport(
-            screenshot, dom, url, vmeta.y, screenshotSize, `interact-${el.type}`,
+            screenshot,
+            dom,
+            url,
+            vmeta.y,
+            screenshotSize,
+            `interact-${el.type}`,
+            interactViewportSeq,
           );
-          const grounded = await groundPatternsWithDOM(tabId, patterns, {
-            expectedScrollY: vmeta.y,
-            viewportHeight: screenshotSize.height,
-          });
-          const viewportBound = keepPatternsForViewport(grounded, screenshotSize.height, rawCaptures.length + allPatterns.length);
+          interactViewportSeq += 1;
+          const viewportBound = keepPatternsForViewport(
+            patterns,
+            screenshotSize.height,
+            interactViewportSeq - 1,
+          );
           allPatterns.push(...viewportBound);
           debug(`Phase 4: ${el.description} → ${viewportBound.length} patterns (strictly bound)`);
         } catch (err) {

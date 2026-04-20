@@ -105,7 +105,7 @@ Your task is to analyze the provided webpage screenshot and DOM structure to ide
    - **location**: Where on the page (e.g., "top banner", "checkout button", "modal")
    - **evidence**: Specific text or visual elements that indicate the pattern
    - **confidence**: Your confidence level (0.0 to 1.0)
-   - **bbox**: Bounding box coordinates [x, y, width, height] if applicable
+   - **bbox**: Required tight box as [x1, y1, x2, y2] normalized 0–1000 for this viewport image (corners)
 
 4. Provide a summary with:
    - **total_patterns**: Total number of patterns detected
@@ -152,7 +152,7 @@ Return your analysis as a JSON object following this structure:
    - **location**: پیج پر کہاں (مثلاً "top banner", "checkout button", "modal")
    - **evidence**: پیٹرن کی نشاندہی کرنے والے مخصوص متن یا بصری عناصر
    - **confidence**: آپ کا اعتماد کا سطح (0.0 سے 1.0)
-   - **bbox**: باؤنڈنگ باکس کوآرڈینیٹس [x, y, width, height] اگر لاگو ہو
+   - **bbox**: لازمی [x1, y1, x2, y2] نارملائزڈ 0–1000 اس ویوپورٹ تصویر کے لیے (کونے)
 
 4. ایک خلاصہ فراہم کریں جس میں شامل ہے:
    - **total_patterns**: پتہ لگائے گئے پیٹرنز کی کل تعداد

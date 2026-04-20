@@ -13,7 +13,9 @@ import {
 } from '@darkpatternhunter/visualizer';
 import { ConfigProvider, Dropdown, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
+import { SUPABASE_SESSION_STORAGE_KEY } from '../../lib/authConstants';
 import { getUserRole, restoreSession, type AppRole } from '../../lib/auth';
+import { getSupabaseAuthStorageKey } from '../../lib/supabaseClient';
 import DatasetCollection from '../dataset-collection';
 import LiveGuard from '../live-guard';
 import { Settings } from '../settings';
@@ -81,7 +83,9 @@ export function PlaygroundPopup() {
       areaName: string,
     ) => {
       // Prevent restoreSession -> storage update -> onChanged -> restoreSession loops.
-      if (areaName !== 'local' || !changes.supabaseSession) return;
+      if (areaName !== 'local') return;
+      const authKey = getSupabaseAuthStorageKey();
+      if (!changes[SUPABASE_SESSION_STORAGE_KEY] && !changes[authKey]) return;
       loadRole(false);
     };
     chrome.storage?.onChanged?.addListener(listener);

@@ -12,6 +12,7 @@ import {
 import {
   Button,
   Card,
+  ConfigProvider,
   Divider,
   Input,
   Radio,
@@ -20,8 +21,11 @@ import {
   Tag,
   Typography,
   message,
+  theme,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import { AuthSlideForms } from './auth-forms';
+import './index.less';
 import {
   type AIConfig,
   type AIProvider,
@@ -33,11 +37,13 @@ import {
 } from '../../utils/aiConfig';
 import {
   getCurrentUser,
+  requestPasswordReset,
   restoreSession,
   signIn,
   signInWithGoogle,
   signOut,
   signUp,
+  updatePassword,
 } from '../../lib/auth';
 
 const { Title, Text, Paragraph } = Typography;
@@ -60,8 +66,12 @@ export function Settings({ role = 'guest' }: SettingsProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authSignupConfirmPassword, setAuthSignupConfirmPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authRememberMe, setAuthRememberMe] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [newPasswordDraft, setNewPasswordDraft] = useState('');
 
   // Load settings from storage on mount
   useEffect(() => {
@@ -231,6 +241,14 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       message.error('Please enter email and password.');
       return;
     }
+    if (!authSignupConfirmPassword) {
+      message.error('Please confirm password.');
+      return;
+    }
+    if (authPassword !== authSignupConfirmPassword) {
+      message.error('Passwords do not match.');
+      return;
+    }
     setAuthLoading(true);
     const result = await signUp(authEmail.trim(), authPassword);
     if (!result.success) {
@@ -238,7 +256,37 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       setAuthLoading(false);
       return;
     }
-    message.success('Sign-up successful. Please verify your email if required.');
+    if (result.needsEmailConfirmation) {
+      message.success(
+        'Check your email to confirm your account. After you click the link, this extension will finish sign-in and close the tab.',
+        8,
+      );
+    } else {
+      message.success('Sign-up successful.');
+      const userRes = await getCurrentUser();
+      if (userRes.success) {
+        setCurrentUserEmail(userRes.data?.email ?? null);
+      }
+    }
+    setAuthLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!authEmail.trim()) {
+      message.error('Please enter your email first.');
+      return;
+    }
+    setAuthLoading(true);
+    const result = await requestPasswordReset(authEmail);
+    if (!result.success) {
+      message.error(result.error || 'Failed to send password reset email.');
+      setAuthLoading(false);
+      return;
+    }
+    message.success(
+      'Password reset email sent. Open the link in Chrome (with this extension enabled); the tab should close once the reset is applied.',
+      8,
+    );
     setAuthLoading(false);
   };
 
@@ -271,6 +319,27 @@ export function Settings({ role = 'guest' }: SettingsProps) {
     setAuthLoading(false);
   };
 
+  const handleAuthFacebookSignIn = async () => {
+    message.info('Facebook sign-in will be enabled next.');
+  };
+
+  const handleChangePassword = async () => {
+    if (!newPasswordDraft || newPasswordDraft.length < 6) {
+      message.error('Enter a new password (at least 6 characters).');
+      return;
+    }
+    setAuthLoading(true);
+    const result = await updatePassword(newPasswordDraft);
+    if (!result.success) {
+      message.error(result.error || 'Could not update password.');
+      setAuthLoading(false);
+      return;
+    }
+    setNewPasswordDraft('');
+    message.success('Password updated.');
+    setAuthLoading(false);
+  };
+
   if (isLoading) {
     return <div>Loading settings...</div>;
   }
@@ -278,55 +347,93 @@ export function Settings({ role = 'guest' }: SettingsProps) {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       {/* Supabase Authentication */}
-      <Card
-        title={
-          <Space>
-            <SettingOutlined />
-            <span>Account (Supabase)</span>
-          </Space>
-        }
-        bordered={false}
+      <ConfigProvider
+        theme={{
+          algorithm: theme.defaultAlgorithm,
+          token: {
+            colorBgBase: '#ffffff',
+            colorBgContainer: '#ffffff',
+          },
+        }}
       >
-        {currentUserEmail ? (
-          <Space direction="vertical" style={{ width: '100%' }} size="small">
-            <Text>
-              Signed in as <Text strong>{currentUserEmail}</Text>
-            </Text>
-            <Button onClick={handleAuthSignOut} loading={authLoading} danger>
-              Log out
-            </Button>
-          </Space>
-        ) : (
-          <Space direction="vertical" style={{ width: '100%' }} size="small">
-            <Input
-              type="email"
-              placeholder="email@example.com"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-            />
-            <Input.Password
-              placeholder="Password"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-            />
-            <Space style={{ width: '100%', justifyContent: 'flex-start' }}>
-              <Button type="primary" onClick={handleAuthSignIn} loading={authLoading}>
-                Log in
+        <Card
+          title={
+            <Space>
+              <SettingOutlined />
+              <span>Account (Supabase)</span>
+            </Space>
+          }
+          bordered={false}
+          style={{ background: '#ffffff' }}
+          className="auth-card"
+        >
+          {currentUserEmail ? (
+            <Space direction="vertical" style={{ width: '100%' }} size="small">
+              <Text>
+                Signed in as <Text strong>{currentUserEmail}</Text>
+              </Text>
+              <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                If you just used a password-reset link, set a new password here, then you can
+                sign in normally next time.
+              </Paragraph>
+              <Input.Password
+                placeholder="New password"
+                value={newPasswordDraft}
+                onChange={(e) => setNewPasswordDraft(e.target.value)}
+                className="auth-input"
+                disabled={authLoading}
+              />
+              <Button onClick={handleChangePassword} loading={authLoading} block>
+                Update password
               </Button>
-              <Button onClick={handleAuthSignUp} loading={authLoading}>
-                Sign up
-              </Button>
-              <Button onClick={handleAuthGoogleSignIn} loading={authLoading}>
-                Google
+              <Button onClick={handleAuthSignOut} loading={authLoading} danger block>
+                Log out
               </Button>
             </Space>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              Credentials are validated via Supabase using the public anon key. No secrets
-              are stored in the extension.
-            </Text>
-          </Space>
-        )}
-      </Card>
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }} size="small">
+              <AuthSlideForms
+                mode={authMode}
+                onModeChange={setAuthMode}
+                login={{
+                  email: authEmail,
+                  password: authPassword,
+                  rememberMe: authRememberMe,
+                  loading: authLoading,
+                  onEmailChange: setAuthEmail,
+                  onPasswordChange: setAuthPassword,
+                  onRememberMeChange: setAuthRememberMe,
+                  onSubmit: handleAuthSignIn,
+                  onGoogle: handleAuthGoogleSignIn,
+                  onFacebook: handleAuthFacebookSignIn,
+                  onForgotPassword: handleForgotPassword,
+                }}
+                signup={{
+                  email: authEmail,
+                  password: authPassword,
+                  confirmPassword: authSignupConfirmPassword,
+                  loading: authLoading,
+                  onEmailChange: setAuthEmail,
+                  onPasswordChange: setAuthPassword,
+                  onConfirmPasswordChange: setAuthSignupConfirmPassword,
+                  onSubmit: handleAuthSignUp,
+                  onGoogle: handleAuthGoogleSignIn,
+                  onFacebook: handleAuthFacebookSignIn,
+                }}
+              />
+              <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                Build with <Text code>REACT_APP_SUPABASE_URL</Text> and{' '}
+                <Text code>REACT_APP_SUPABASE_PUBLISHABLE_DEFAULT_KEY</Text>. In Supabase →
+                Authentication → URL configuration, add this exact redirect:{' '}
+                <Text code>{chrome?.identity?.getRedirectURL?.('supabase-auth') ?? '…'}</Text>{' '}
+                (from Chrome with this extension loaded). Enable the Google provider with a
+                valid <strong>Web application</strong> OAuth client. If confirmation emails
+                never arrive, check Auth rate limits and SMTP / “Confirm email” settings.
+              </Paragraph>
+            </Space>
+          )}
+        </Card>
+      </ConfigProvider>
 
       <Divider />
       {role !== 'admin' && (

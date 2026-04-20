@@ -3,6 +3,10 @@ import {
   withErrorHandling,
 } from '@darkpatternhunter/shared/baseDB';
 import JSZip from 'jszip';
+import {
+  isDatasetCloudSyncEnabled,
+  upsertDatasetEntryRemote,
+} from './datasetSupabaseSync';
 
 // Database configuration
 const DB_NAME = 'dph_dataset';
@@ -227,6 +231,12 @@ export const storeDatasetEntry = async (entry: DatasetEntry): Promise<void> => {
     };
 
     await datasetDbManager.put(DATASET_ENTRIES_STORE, data);
+
+    if (isDatasetCloudSyncEnabled()) {
+      void upsertDatasetEntryRemote(entry).catch((err) => {
+        console.warn('[datasetSupabaseSync] cloud upsert failed:', err);
+      });
+    }
   }, 'Failed to store dataset entry');
 };
 
@@ -263,7 +273,7 @@ export const exportDatasetAsJSONL = async (): Promise<string> => {
   return entries.map((entry) => JSON.stringify(entry)).join('\n');
 };
 
-// Export dataset as formatted JSON array
+// Export dataset as formatted JSON array (full IndexedDB shape: auto_labels, viewport_screenshots, etc.)
 export const exportDatasetAsJSON = async (
   pretty: boolean | number = 2,
 ): Promise<string> => {
@@ -271,6 +281,204 @@ export const exportDatasetAsJSON = async (
   const spacing =
     typeof pretty === 'number' && pretty >= 0 ? pretty : pretty ? 2 : undefined;
   return JSON.stringify(entries, null, spacing);
+};
+
+/** Canonical 18-category taxonomy labels (for export metadata — keep aligned with autoLabeling / COCO). */
+export const DATASET_TAXONOMY_LABELS = [
+  'Nagging',
+  'Scarcity & Popularity',
+  'FOMO / Urgency',
+  'Reference Pricing',
+  'Disguised Ads',
+  'False Hierarchy',
+  'Interface Interference',
+  'Misdirection',
+  'Hard To Close',
+  'Obstruction',
+  'Bundling',
+  'Sneaking',
+  'Hidden Information',
+  'Subscription Trap',
+  'Roach Motel',
+  'Confirmshaming',
+  'Forced Registration',
+  'Gamification Pressure',
+] as const;
+
+/** One normalized label for vision / JSON training pipelines */
+export interface DatasetTrainingLabel {
+  dark_pattern_type: string;
+  confidence: number;
+  explanation: string;
+  evidence?: string;
+  severity?: string;
+  location?: string;
+  /** Pixel bbox [x, y, w, h] in coordinates of the image identified by `image_ref` */
+  region: { x: number; y: number; width: number; height: number } | null;
+  /** Which viewport image this bbox is relative to when multi-viewport data exists */
+  viewport_index?: number;
+  bbox_source?: 'dom' | 'vlm';
+  model?: string;
+  /** True only for human-accepted verified_labels */
+  ground_truth: boolean;
+  label_source: 'verified' | 'auto' | 'viewport' | 'legacy';
+}
+
+export interface DatasetTrainingEntry {
+  id: string;
+  url: string;
+  timestamp: number;
+  /** Thumbnail / first viewport screenshot (data URL) when stored */
+  screenshot?: string;
+  page_title?: string;
+  labels: DatasetTrainingLabel[];
+  /**
+   * When present, bbox coordinates in labels refer to the matching index’s `screenshot`
+   * (same scroll order as capture). Omitted in lightweight exports.
+   */
+  viewport_screenshots?: DatasetEntry['viewport_screenshots'];
+}
+
+export interface DatasetTrainingExport {
+  schema_version: 'dph-training-v1';
+  taxonomy: readonly string[];
+  documentation: {
+    bbox_space: string;
+    label_priority: string;
+  };
+  entries: DatasetTrainingEntry[];
+}
+
+function bboxToRegion(
+  bbox: [number, number, number, number] | undefined,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!bbox || bbox.length !== 4) return null;
+  const [x, y, w, h] = bbox;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) {
+    return null;
+  }
+  if (w <= 0 || h <= 0) return null;
+  return { x, y, width: w, height: h };
+}
+
+/**
+ * Collect ML-ready labels for one entry. Prefers human-verified accepts; otherwise VLM auto_labels;
+ * then per-viewport patterns; then legacy `patterns`.
+ */
+export function collectTrainingLabels(entry: DatasetEntry): DatasetTrainingLabel[] {
+  const acceptedVerified = entry.verified_labels?.filter((v) => v.verified) ?? [];
+
+  if (acceptedVerified.length > 0) {
+    return acceptedVerified.map((v) => ({
+      dark_pattern_type: v.category,
+      confidence: 1,
+      explanation: (v.description || v.notes || '').trim() || v.category,
+      evidence: v.evidence,
+      severity: 'medium',
+      location: v.location,
+      region: bboxToRegion(v.bbox),
+      viewport_index: v.viewportIndex,
+      ground_truth: true,
+      label_source: 'verified' as const,
+    }));
+  }
+
+  if (entry.auto_labels && entry.auto_labels.length > 0) {
+    return entry.auto_labels.map((raw) => {
+      const a = enrichAutoLabel(raw);
+      return {
+        dark_pattern_type: a.category,
+        confidence: a.confidence,
+        explanation: (a.description || '').trim() || a.category,
+        evidence: a.evidence,
+        severity: a.severity,
+        location: a.location,
+        region: bboxToRegion(a.bbox),
+        viewport_index: a.viewportIndex,
+        bbox_source: a.bboxSource,
+        model: a.model,
+        ground_truth: false,
+        label_source: 'auto' as const,
+      };
+    });
+  }
+
+  if (entry.viewport_screenshots && entry.viewport_screenshots.length > 0) {
+    const out: DatasetTrainingLabel[] = [];
+    entry.viewport_screenshots.forEach((vp, vIdx) => {
+      for (const raw of vp.patterns || []) {
+        const a = enrichAutoLabel(raw);
+        out.push({
+          dark_pattern_type: a.category,
+          confidence: a.confidence,
+          explanation: (a.description || '').trim() || a.category,
+          evidence: a.evidence,
+          severity: a.severity,
+          location: a.location,
+          region: bboxToRegion(a.bbox),
+          viewport_index: a.viewportIndex ?? vIdx,
+          bbox_source: a.bboxSource,
+          model: a.model,
+          ground_truth: false,
+          label_source: 'viewport' as const,
+        });
+      }
+    });
+    if (out.length > 0) return out;
+  }
+
+  return (entry.patterns || []).map((p) => ({
+    dark_pattern_type: p.type,
+    confidence: p.confidence ?? 0,
+    explanation: p.description,
+    evidence: p.evidence,
+    severity: p.severity,
+    location: p.location,
+    region: bboxToRegion(p.bbox),
+    viewport_index: p.viewportIndex,
+    ground_truth: false,
+    label_source: 'legacy' as const,
+  }));
+}
+
+export type ExportTrainingJsonOptions = {
+  /** Include full `viewport_screenshots` (large). Default true so bboxes match an image. */
+  includeViewportScreenshots?: boolean;
+};
+
+/** JSON intended for collaborators / VLMs: every entry has an explicit `labels[]` with regions and scores. */
+export const exportDatasetAsTrainingJSON = async (
+  pretty: boolean | number = 2,
+  options: ExportTrainingJsonOptions = {},
+): Promise<string> => {
+  const { includeViewportScreenshots = true } = options;
+  const entries = await getDatasetEntries();
+  const spacing =
+    typeof pretty === 'number' && pretty >= 0 ? pretty : pretty ? 2 : undefined;
+
+  const trainingEntries: DatasetTrainingEntry[] = entries.map((e) => ({
+    id: e.id,
+    url: e.url,
+    timestamp: e.timestamp,
+    screenshot: e.screenshot,
+    page_title: e.metadata?.pageTitle,
+    labels: collectTrainingLabels(e),
+    viewport_screenshots: includeViewportScreenshots ? e.viewport_screenshots : undefined,
+  }));
+
+  const payload: DatasetTrainingExport = {
+    schema_version: 'dph-training-v1',
+    taxonomy: DATASET_TAXONOMY_LABELS,
+    documentation: {
+      bbox_space:
+        'Each region is {x,y,width,height} in pixels on the image referenced by viewport_index: use entry.viewport_screenshots[viewport_index].screenshot when present; otherwise entry.screenshot (single-viewport / thumbnail).',
+      label_priority:
+        'Per entry: accepted verified_labels (ground_truth=true) if any; else auto_labels; else patterns on viewport_screenshots; else legacy patterns[].',
+    },
+    entries: trainingEntries,
+  };
+
+  return JSON.stringify(payload, null, spacing);
 };
 
 // Text-only JSONL export, flattened per detected pattern
@@ -297,21 +505,20 @@ export const exportTextDatasetAsJSONL = async (): Promise<string> => {
   const lines: string[] = [];
 
   entries.forEach((entry) => {
-    if (!entry.patterns || entry.patterns.length === 0) {
-      return;
-    }
+    const labels = collectTrainingLabels(entry);
+    if (labels.length === 0) return;
 
-    entry.patterns.forEach((pattern, idx) => {
+    labels.forEach((lab, idx) => {
       const example: TextPatternExample = {
         id: `${entry.id}#${idx}`,
         url: entry.url,
         page_title: entry.metadata?.pageTitle,
         site_name: entry.metadata?.researchContext?.siteName,
-        pattern_type: pattern.type,
-        severity: pattern.severity,
-        label: pattern.type,
-        evidence: pattern.evidence,
-        description: pattern.description,
+        pattern_type: lab.dark_pattern_type,
+        severity: (lab.severity as DarkPattern['severity']) || 'medium',
+        label: lab.dark_pattern_type,
+        evidence: lab.evidence || '',
+        description: lab.explanation,
         dom_excerpt: entry.dom,
         research_tags: {
           isPakistaniEcommerce:
@@ -321,7 +528,19 @@ export const exportTextDatasetAsJSONL = async (): Promise<string> => {
         },
       };
 
-      lines.push(JSON.stringify(example));
+      lines.push(
+        JSON.stringify({
+          ...example,
+          confidence: lab.confidence,
+          region: lab.region,
+          viewport_index: lab.viewport_index,
+          ground_truth: lab.ground_truth,
+          label_source: lab.label_source,
+          bbox_source: lab.bbox_source,
+          model: lab.model,
+          location: lab.location,
+        }),
+      );
     });
   });
 
@@ -339,7 +558,10 @@ export interface ExportedDatasetRecord {
   timestamp: number;
   image_path: string | null;
   dom_excerpt?: string;
+  /** Legacy field; often empty when using the agent pipeline */
   patterns: DarkPattern[];
+  /** Normalized labels for training / sharing (same logic as exportDatasetAsTrainingJSON) */
+  labels: DatasetTrainingLabel[];
   summary?: DatasetEntry['summary'];
   metadata?: DatasetEntry['metadata'];
 }
@@ -372,6 +594,7 @@ export const exportDatasetAsBundleZip = async (): Promise<Blob> => {
       image_path: imagePath,
       dom_excerpt: entry.dom,
       patterns: entry.patterns,
+      labels: collectTrainingLabels(entry),
       summary: entry.summary,
       metadata: entry.metadata,
     };
@@ -439,61 +662,46 @@ export const exportForUITarsFineTuning = async (): Promise<Blob> => {
     });
   };
 
-  // Process entries sequentially to await image loading
-  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-    const entry = entries[entryIndex];
+  const saveDataUrlToImages = (
+    fileName: string,
+    dataUrl: string,
+  ): string | null => {
+    if (!imagesFolder) return null;
+    const match = dataUrl.match(/^data:(.*?);base64,(.*)$/);
+    const base64Payload = match ? match[2] : null;
+    if (!base64Payload) return null;
+    imagesFolder.file(fileName, base64Payload, { base64: true });
+    return `images/${fileName}`;
+  };
 
-    // Skip entries without valid screenshot or patterns
-    if (!entry.screenshot || !entry.patterns || entry.patterns.length === 0) {
-      continue;
-    }
-
-    // Get actual image dimensions to ensure correct normalization (handles DPR scaling)
-    const { w: width, h: height } = await getImageDimensions(entry.screenshot);
-
-    const safeId = sanitizeFilename(entry.id, `entry_${entryIndex + 1}`);
-    const imageFileName = `${safeId}.png`;
-    let imagePath = `images/${imageFileName}`;
-
-    // Save FULL screenshot (shared by all patterns in this page)
-    if (imagesFolder) {
-      const match = entry.screenshot.match(/^data:(.*?);base64,(.*)$/);
-      const base64Payload = match ? match[2] : null;
-      if (base64Payload) {
-        imagesFolder.file(imageFileName, base64Payload, { base64: true });
-        // Update path to be absolute-like or relative as needed by user's training setup
-        // For portability in zip, we use relative path inside zip
-        imagePath = `images/${imageFileName}`;
-      }
-    }
-
-    const currentImageId = imageIdCounter++;
-
-    // Create one training example per pattern (Standard UI-TARS format)
-    entry.patterns.forEach((pattern) => {
-      // Validate bbox
+  const emitPatternsForImage = async (
+    patterns: DarkPattern[],
+    imagePath: string,
+    dataUrlForDims: string,
+    currentImageId: number,
+  ) => {
+    const { w: width, h: height } = await getImageDimensions(dataUrlForDims);
+    patterns.forEach((pattern) => {
       if (!pattern.bbox || pattern.bbox.length !== 4) return;
-
       const [x, y, w, h] = pattern.bbox;
+      if (w <= 0 || h <= 0) return;
 
-      // Calculate normalized coordinates for description
       const normX = normalize(x, width);
       const normY = normalize(y, height);
       const normW = normalize(w, width);
       const normH = normalize(h, height);
 
-      // Construct proper UI-TARS prompt and response
       const systemPrompt = `[SYSTEM] You are UI-TARS, an assistant that detects deceptive dark patterns in web interfaces.\n\n[INSTRUCTION] Analyze this webpage screenshot and identify any dark patterns present.\n\n[SCREENSHOT] ${imagePath}\n\n[RESPONSE]`;
 
-      const category = pattern.type.toUpperCase().replace(/ /g, '_'); // e.g., "ACTIVITY MESSAGE"
+      const category = pattern.type.toUpperCase().replace(/ /g, '_');
 
       const label = `I detected a ${pattern.type.toLowerCase()} dark pattern in this screenshot. ${pattern.type}: ${pattern.description}. The pattern is located at coordinates (${normX}, ${normY}) with dimensions ${normW} x ${normH} (normalized to image size).`;
 
       const example: UITarsStandardExample = {
         prompt: systemPrompt,
-        label: label,
-        image_path: imagePath, // Use relative path in zip
-        category: category,
+        label,
+        image_path: imagePath,
+        category,
         bbox: [x, y, w, h],
         image_id: currentImageId,
         annotation_id: annotationIdCounter++,
@@ -501,6 +709,56 @@ export const exportForUITarsFineTuning = async (): Promise<Blob> => {
 
       jsonlLines.push(JSON.stringify(example));
     });
+  };
+
+  // Process entries sequentially to await image loading
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+    const entry = entries[entryIndex];
+    const safeBase = sanitizeFilename(entry.id, `entry_${entryIndex + 1}`);
+
+    let emitted = false;
+
+    if (entry.viewport_screenshots?.length) {
+      for (let vIdx = 0; vIdx < entry.viewport_screenshots.length; vIdx++) {
+        const vp = entry.viewport_screenshots[vIdx];
+        const rawPats = vp.patterns || [];
+        if (!vp.screenshot || rawPats.length === 0) continue;
+
+        const eff = rawPats.map((raw) =>
+          autoLabelToDarkPattern(
+            enrichAutoLabel({ ...raw, viewportIndex: raw.viewportIndex ?? vIdx }),
+          ),
+        );
+        const withBbox = eff.filter(
+          (p) =>
+            p.bbox &&
+            p.bbox.length === 4 &&
+            p.bbox[2] > 0 &&
+            p.bbox[3] > 0,
+        );
+        if (withBbox.length === 0) continue;
+
+        const imageFileName = `${safeBase}_vp${vIdx}.png`;
+        const imagePath = saveDataUrlToImages(imageFileName, vp.screenshot);
+        if (!imagePath) continue;
+
+        const currentImageId = imageIdCounter++;
+        await emitPatternsForImage(withBbox, imagePath, vp.screenshot, currentImageId);
+        emitted = true;
+      }
+    }
+
+    if (emitted) continue;
+
+    const eff = getEffectivePatterns(entry);
+    if (!entry.screenshot || eff.length === 0) continue;
+
+    const imageFileName = `${safeBase}.png`;
+    const imagePath = saveDataUrlToImages(imageFileName, entry.screenshot);
+    if (!imagePath) continue;
+
+    const currentImageId = imageIdCounter++;
+    await emitPatternsForImage(eff, imagePath, entry.screenshot, currentImageId);
   }
 
   zip.file('processed.jsonl', jsonlLines.join('\n'));
@@ -573,18 +831,25 @@ export function verifiedLabelToDarkPattern(verifiedLabel: VerifiedLabel): DarkPa
  * Get effective patterns for an entry (verified_labels preferred, fallback to auto_labels)
  */
 export function getEffectivePatterns(entry: DatasetEntry): DarkPattern[] {
-  // If verified_labels exist, use those (only verified=true)
-  if (entry.verified_labels && entry.verified_labels.length > 0) {
-    return entry.verified_labels
-      .filter((v) => v.verified)
-      .map(verifiedLabelToDarkPattern);
+  const acceptedVerified =
+    entry.verified_labels?.filter((v) => v.verified) ?? [];
+  if (acceptedVerified.length > 0) {
+    return acceptedVerified.map(verifiedLabelToDarkPattern);
   }
 
-  // Otherwise, convert auto_labels to patterns
   if (entry.auto_labels && entry.auto_labels.length > 0) {
     return entry.auto_labels.map((a) => autoLabelToDarkPattern(enrichAutoLabel(a)));
   }
 
-  // Fallback to legacy patterns field
+  if (entry.viewport_screenshots && entry.viewport_screenshots.length > 0) {
+    const merged: DarkPattern[] = [];
+    entry.viewport_screenshots.forEach((vp, vIdx) => {
+      for (const raw of vp.patterns || []) {
+        merged.push(autoLabelToDarkPattern(enrichAutoLabel({ ...raw, viewportIndex: raw.viewportIndex ?? vIdx })));
+      }
+    });
+    if (merged.length > 0) return merged;
+  }
+
   return entry.patterns || [];
 }

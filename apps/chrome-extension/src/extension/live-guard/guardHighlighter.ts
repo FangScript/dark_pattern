@@ -40,6 +40,8 @@ interface DetectedPattern {
   counterMeasure: string;
   scrollY?: number;                          // page scroll offset when screenshot was taken
   screenshotSize?: ScreenshotSize;           // dimensions of the viewport screenshot
+  /** Capture index for multi-viewport scans (optional) */
+  viewportIndex?: number;
 }
 
 // Extended pattern interface with screenshot metadata
@@ -53,6 +55,96 @@ let currentHighlights: HTMLElement[] = [];
 let shadowHost: HTMLElement | null = null;
 let shadowRoot: ShadowRoot | null = null;
 let currentScreenshotSize: ScreenshotSize | null = null;
+
+/** Cleanup scroll/resize listeners that keep highlights aligned with the page */
+let highlightScrollResizeCleanup: (() => void) | null = null;
+
+function detachHighlightScrollResizeSync(): void {
+  highlightScrollResizeCleanup?.();
+  highlightScrollResizeCleanup = null;
+}
+
+/**
+ * Shadow host is positioned against the viewport ICB; child `top`/`left` must be
+ * **client** (viewport) coordinates. We store document-space boxes on `dataset` and
+ * refresh client `left`/`top` on scroll/resize.
+ */
+function syncOneHighlightClientPosition(el: HTMLElement): void {
+  if (el.dataset.docLeft === undefined || el.dataset.docTop === undefined) {
+    return;
+  }
+  const docLeft = Number(el.dataset.docLeft);
+  const docTop = Number(el.dataset.docTop);
+  const w = Number(el.dataset.docWidth);
+  const h = Number(el.dataset.docHeight);
+  if (!Number.isFinite(docLeft) || !Number.isFinite(docTop)) {
+    return;
+  }
+  el.style.position = 'absolute';
+  el.style.left = `${docLeft - (window.scrollX || 0)}px`;
+  el.style.top = `${docTop - (window.scrollY || 0)}px`;
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    el.style.width = `${w}px`;
+    el.style.height = `${h}px`;
+  }
+}
+
+function syncAllHighlightClientPositions(): void {
+  currentHighlights.forEach(syncOneHighlightClientPosition);
+}
+
+function attachHighlightScrollResizeSync(): void {
+  detachHighlightScrollResizeSync();
+  const onScrollOrResize = () => syncAllHighlightClientPositions();
+  window.addEventListener('scroll', onScrollOrResize, true);
+  window.addEventListener('resize', onScrollOrResize, true);
+  highlightScrollResizeCleanup = () => {
+    window.removeEventListener('scroll', onScrollOrResize, true);
+    window.removeEventListener('resize', onScrollOrResize, true);
+  };
+}
+
+/** Persist document-space rect and apply initial client-space geometry */
+function bindHighlightToDocumentRect(
+  el: HTMLElement,
+  docLeft: number,
+  docTop: number,
+  width: number,
+  height: number,
+): void {
+  el.dataset.docLeft = String(docLeft);
+  el.dataset.docTop = String(docTop);
+  el.dataset.docWidth = String(width);
+  el.dataset.docHeight = String(height);
+  syncOneHighlightClientPosition(el);
+}
+
+/**
+ * Hit-test at the VLM box center in **current** viewport coordinates, using the
+ * capture scroll offset so we do not sample the wrong row when the page has moved.
+ */
+function elementFromPointForCaptureCenter(
+  result: { domX: number; domY: number; domWidth: number; domHeight: number },
+  captureScrollY: number,
+): { element: Element | null; elementRect: DOMRect | null } {
+  const sx = window.scrollX || 0;
+  const sy = window.scrollY || 0;
+  const centerVx = result.domX + result.domWidth / 2;
+  const centerVy = result.domY + result.domHeight / 2;
+  const docCenterX = sx + centerVx;
+  const docCenterY = captureScrollY + centerVy;
+  const clientX = docCenterX - sx;
+  const clientY = docCenterY - sy;
+  try {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!element) {
+      return { element: null, elementRect: null };
+    }
+    return { element, elementRect: element.getBoundingClientRect() };
+  } catch {
+    return { element: null, elementRect: null };
+  }
+}
 
 /**
  * Initialize Shadow DOM for highlights
@@ -223,6 +315,7 @@ function initShadowDOM(): void {
  * Clear all highlights from the page
  */
 function clearHighlights(): void {
+  detachHighlightScrollResizeSync();
   currentHighlights.forEach((highlight) => {
     highlight.remove();
   });
@@ -256,7 +349,8 @@ function getSeverityColor(severity: string): { bg: string; border: string; badge
  * If the DOM element is more than MAX_SNAP_RATIO times larger in area than
  * the AI bbox, the element is too big (e.g. a container or body) — use AI coords.
  */
-const MAX_SNAP_RATIO = 3.0;
+/** Hybrid: allow light element snap only when DOM element is not much larger than VLM box */
+const MAX_SNAP_RATIO = 1.5;
 
 function shouldUseAICoords(
   aiWidth: number, aiHeight: number,
@@ -270,13 +364,14 @@ function shouldUseAICoords(
 /**
  * Create a tight, precise highlight overlay for a detected pattern.
  *
- * Strategy (in order of preference):
- *  0. DOM-grounded — evidence-based bbox in document CSS pixels (no VLM mapping).
- *  1. DOM snap  — if we find the actual element AND it's not disproportionately
- *                 larger than the AI bbox, use its exact client rect.
- *  2. AI coords — use the mapped AI bbox directly (more precise than a huge parent).
- *  3. Badge     — if no bbox or screenshot size, render a small label instead of
- *                 covering the whole page.
+ * Strategy (hybrid VLM-first):
+ *  0. Legacy DOM-grounded — if bboxSource === 'dom', bbox is document CSS px (rare).
+ *  1. Light snap — elementFromPoint at AI center; if not much larger than AI box, snap.
+ *  2. VLM coords — normalized bbox mapped to document space (+ capture scrollY).
+ *  3. Badge — if no bbox or screenshot size, small label instead of full-page cover.
+ *
+ * All full rectangles are stored in **document** space (`dataset.doc*`) and converted
+ * to client `left`/`top` on each scroll/resize so multi-viewport captures stay aligned.
  */
 function createHighlightOverlay(
   pattern: PatternWithMetadata,
@@ -317,13 +412,11 @@ function createHighlightOverlay(
     overlay.dataset.patternType = pattern.type;
     overlay.dataset.severity = pattern.severity;
     overlay.style.cssText = `
+      position: absolute;
       background-color: ${colors.bg};
       border-color: ${colors.border};
-      left: ${domBbox.x}px;
-      top: ${domBbox.y}px;
-      width: ${domBbox.width}px;
-      height: ${domBbox.height}px;
     `;
+    bindHighlightToDocumentRect(overlay, domBbox.x, domBbox.y, domBbox.width, domBbox.height);
     overlay.addEventListener('mouseenter', () => showTooltip(pattern, overlay));
     overlay.addEventListener('mouseleave', () => hideTooltip());
     debug('DOM-grounded highlight:', domBbox);
@@ -382,14 +475,15 @@ function createHighlightOverlay(
   overlay.dataset.patternType = pattern.type;
   overlay.dataset.severity = pattern.severity;
   overlay.style.cssText = `
+    position: absolute;
     background-color: ${colors.bg};
     border-color: ${colors.border};
   `;
 
-  // ── Map AI bbox → DOM coordinates ────────────────────────────────────────
+  // ── Map AI bbox → document-space CSS px ──────────────────────────────────
   const viewportSize = getViewportSize();
   const dpr = getDevicePixelRatio();
-  // Pass scrollY=0 so mapping is viewport-relative; we add captureScrollY manually.
+  // Pass scrollY=0 so mapping is viewport-relative; combine with live scroll for doc X.
   const zeroScroll: ScrollPosition = { scrollX: 0, scrollY: 0 };
 
   const result = getCanvasToDomCoords(
@@ -401,44 +495,38 @@ function createHighlightOverlay(
     pattern.isNormalized !== false,
   );
 
-  const aiLeft   = result.domX;
-  const aiTop    = result.domY + captureScrollY;
-  const aiWidth  = result.domWidth;
+  const sx = window.scrollX || 0;
+  const sy = window.scrollY || 0;
+  const aiWidth = result.domWidth;
   const aiHeight = result.domHeight;
+  const docAiLeft = sx + result.domX;
+  const docAiTop = captureScrollY + result.domY;
 
-  // ── Case 1: Smart snap-to-element ────────────────────────────────────────
-  if (result.element && result.elementRect) {
-    const el   = result.element;
-    const rect = result.elementRect;
-    const currentScrollY = window.scrollY || 0;
+  const { element: hitElement, elementRect: hitRect } = elementFromPointForCaptureCenter(
+    result,
+    captureScrollY,
+  );
 
-    const elemLeft   = rect.left;
-    const elemTop    = rect.top + currentScrollY;
-    const elemWidth  = rect.width;
+  // ── Case 1: Smart snap-to-element (hit-test uses capture scroll, not stale scroll=0) ──
+  if (hitElement && hitRect) {
+    const el = hitElement;
+    const rect = hitRect;
+    const elemDocLeft = rect.left + sx;
+    const elemDocTop = rect.top + sy;
+    const elemWidth = rect.width;
     const elemHeight = rect.height;
 
     if (shouldUseAICoords(aiWidth, aiHeight, elemWidth, elemHeight)) {
-      // Element is too large (e.g. a container div) — use AI bbox directly
-      overlay.style.left   = `${aiLeft}px`;
-      overlay.style.top    = `${aiTop}px`;
-      overlay.style.width  = `${aiWidth}px`;
-      overlay.style.height = `${aiHeight}px`;
+      bindHighlightToDocumentRect(overlay, docAiLeft, docAiTop, aiWidth, aiHeight);
       debug('Element too large, using AI coords:', { elem: el.tagName, elemWidth, elemHeight, aiWidth, aiHeight });
     } else {
-      // Good snap — element size is proportional
-      overlay.style.left   = `${elemLeft}px`;
-      overlay.style.top    = `${elemTop}px`;
-      overlay.style.width  = `${elemWidth}px`;
-      overlay.style.height = `${elemHeight}px`;
+      bindHighlightToDocumentRect(overlay, elemDocLeft, elemDocTop, elemWidth, elemHeight);
       debug('Snapped to element:', { elem: el.tagName, elemWidth, elemHeight });
     }
   } else {
-    // ── Case 2: No element found — use AI coords ────────────────────────
-    overlay.style.left   = `${aiLeft}px`;
-    overlay.style.top    = `${aiTop}px`;
-    overlay.style.width  = `${aiWidth}px`;
-    overlay.style.height = `${aiHeight}px`;
-    debug('No element found, using AI coords:', { aiLeft, aiTop, aiWidth, aiHeight });
+    // ── Case 2: No element found — use AI coords ────────────────────────────
+    bindHighlightToDocumentRect(overlay, docAiLeft, docAiTop, aiWidth, aiHeight);
+    debug('No element found, using AI coords:', { docAiLeft, docAiTop, aiWidth, aiHeight });
   }
 
   overlay.addEventListener('mouseenter', () => showTooltip(pattern, overlay));
@@ -543,6 +631,9 @@ function showHighlights(
     shadowRoot!.appendChild(highlight);
     currentHighlights.push(highlight);
   });
+
+  attachHighlightScrollResizeSync();
+  syncAllHighlightClientPositions();
 
   debug(`Added ${patterns.length} highlights across multiple viewports`);
 }

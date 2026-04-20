@@ -8,9 +8,9 @@ import {
   PlayCircleOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-// Note: AI calls are handled via runAgentLoop/autoLabeling.ts
-// Legacy imports (AIActionType, AIArgs, callAIWithObjectResponse, IModelConfig)
-// are kept for the analyzePageForDarkPatterns fallback function below.
+// Primary analysis: runAgentLoop → analyzeScreenshot → autoLabelScreenshot (VLM-first bboxes in
+// screenshot pixels; DOM evidence grounding is not used). Legacy analyzePageForDarkPatterns below
+// is unused in the UI but kept for reference / manual reuse.
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import { runAgentLoop, agentPatternsToAutoLabels, type ViewportCapture } from '../../utils/agentAnalysis';
 import { AIActionType, callAIWithObjectResponse, type AIArgs } from '@darkpatternhunter/core/ai-model';
@@ -52,16 +52,14 @@ import {
   deleteDatasetEntry,
   exportDatasetAsBundleZip,
   exportDatasetAsJSON,
+  exportDatasetAsTrainingJSON,
   exportForUITarsFineTuning,
   exportTextDatasetAsJSONL,
   getDatasetEntries,
   getEffectivePatterns,
   storeDatasetEntry,
 } from '../../utils/datasetDB';
-import {
-  autoLabelScreenshot,
-  filterByConfidence,
-} from '../../utils/autoLabeling';
+import { filterByConfidence } from '../../utils/autoLabeling';
 import LabelReviewPanel from './LabelReviewPanel';
 import { cropImageFromBbox } from '../../utils/imageCrop';
 import {
@@ -710,11 +708,11 @@ export default function DatasetCollection() {
         throw new Error('AI model not configured');
       }
 
-      // ── PHASED AGENT LOOP ─────────────────────────────────────────
+      // ── PHASED AGENT LOOP (hybrid: same pipeline as research auto-labeling; no DOM bbox grounding) ──
       // Phase 1: SCAN — scroll entire page, capture every viewport
-      // Phase 2: ANALYZE — VLM analyzes each screenshot independently
+      // Phase 2: ANALYZE — VLM per viewport → pixel bboxes + viewportIndex in agentAnalysis
       // Phase 3: INTERACT — click expandable elements
-      // Phase 4: RE-ANALYZE — analyze interaction results
+      // Phase 4: RE-ANALYZE — screenshot + VLM again
       const agentResult = await runAgentLoop(tab.id!, (msg) => {
         message.loading({ content: msg, key: 'analysis', duration: 0 });
       });
@@ -900,8 +898,7 @@ export default function DatasetCollection() {
           prev ? { ...prev, status: 'Scanning all viewports with AI...' } : null,
         );
 
-        // Use the same phased agent loop as "Analyze Current Page"
-        // This scrolls the full page and captures every viewport
+        // Same hybrid VLM-first agent loop as "Analyze Current Page" (no DOM bbox grounding)
         const agentResult = await runAgentLoop(tab.id!, (msg) => {
           setProgress((prev) =>
             prev ? { ...prev, status: msg } : null,
@@ -1798,17 +1795,34 @@ export default function DatasetCollection() {
     }
   };
 
-  const handleExport = async () => {
+  /** ML-ready JSON: explicit labels[], region, confidence, taxonomy (18 categories). */
+  const handleExportTrainingJson = async () => {
+    try {
+      const jsonData = await exportDatasetAsTrainingJSON(2, {
+        includeViewportScreenshots: true,
+      });
+      const filename = `dark-patterns-training-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
+      triggerFallbackDownload(jsonData, filename);
+    } catch (error) {
+      console.error('Training JSON export error:', error);
+      message.error(
+        `Failed to export training JSON: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+  };
+
+  /** Full IndexedDB dump (auto_labels, raw dom, all nested fields). */
+  const handleExportFullJson = async () => {
     try {
       const jsonData = await exportDatasetAsJSON(2);
-      const filename = `dark-patterns-dataset-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
-
-      // Direct download from popup to avoid message size limits
+      const filename = `dark-patterns-full-backup-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
       triggerFallbackDownload(jsonData, filename);
     } catch (error) {
       console.error('Export error before download:', error);
       message.error(
-        `Failed to prepare dataset for export: ${
+        `Failed to prepare full dataset export: ${
           error instanceof Error ? error.message : 'Unknown error'
         }`,
       );
@@ -2314,11 +2328,19 @@ export default function DatasetCollection() {
               : 'Batch Process (Auto Crawl)'}
           </Button>
           <Button
+            type="primary"
             icon={<DownloadOutlined />}
-            onClick={handleExport}
+            onClick={handleExportTrainingJson}
             disabled={entries.length === 0}
           >
-            Export JSON (Full)
+            Export JSON (training)
+          </Button>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={handleExportFullJson}
+            disabled={entries.length === 0}
+          >
+            Export JSON (full backup)
           </Button>
           <Button
             icon={<DownloadOutlined />}

@@ -2,6 +2,12 @@
 
 import { uuid } from '@darkpatternhunter/shared/utils';
 import type { WebUIContext } from '@darkpatternhunter/web';
+import { consumeAuthCallbackUrl } from '../lib/auth';
+import { AUTH_RUNTIME_MESSAGE } from '../lib/authConstants';
+import {
+  hydrateSupabaseSessionFromChromeStorage,
+  performGoogleIdentitySignIn,
+} from '../lib/googleIdentityOAuth';
 import { captureTabScreenshot } from '../utils/screenshotCapture';
 
 const workerMessageTypes = {
@@ -34,6 +40,74 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error(error));
 
+// Keep Supabase session warm in the service worker (browser startup / extension reload).
+void hydrateSupabaseSessionFromChromeStorage();
+chrome.runtime.onStartup.addListener(() => {
+  void hydrateSupabaseSessionFromChromeStorage();
+});
+chrome.runtime.onInstalled.addListener(() => {
+  void hydrateSupabaseSessionFromChromeStorage();
+});
+
+/**
+ * Email confirmation / password recovery links use `redirectTo` (often
+ * `https://<extension-id>.chromiumapp.org/supabase-auth`). That opens a normal tab;
+ * complete the session here so the user does not get stuck on a blank redirect.
+ */
+const chromiumAppAuthTabsHandled = new Set<number>();
+
+function isChromiumAppAuthRedirectUrl(url: string): boolean {
+  try {
+    const id = chrome.runtime.id;
+    const u = new URL(url);
+    return u.hostname === `${id}.chromiumapp.org`;
+  } catch {
+    return false;
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab.url) {
+    return;
+  }
+  if (!isChromiumAppAuthRedirectUrl(tab.url)) {
+    return;
+  }
+  if (chromiumAppAuthTabsHandled.has(tabId)) {
+    return;
+  }
+  if (!/[#?].*(?:code|access_token|refresh_token|error)/i.test(tab.url)) {
+    return;
+  }
+
+  chromiumAppAuthTabsHandled.add(tabId);
+  void (async () => {
+    try {
+      const result = await consumeAuthCallbackUrl(tab.url!);
+      if (result.success) {
+        try {
+          await chrome.tabs.remove(tabId);
+        } catch {
+          /* tab may already be closed */
+        }
+      } else {
+        console.error(
+          '[ServiceWorker] Supabase email/link callback failed:',
+          result.error,
+        );
+        chromiumAppAuthTabsHandled.delete(tabId);
+      }
+    } catch (e) {
+      console.error('[ServiceWorker] consumeAuthCallbackUrl', e);
+      chromiumAppAuthTabsHandled.delete(tabId);
+    }
+  })();
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chromiumAppAuthTabsHandled.delete(tabId);
+});
+
 // cache data between sidepanel and fullscreen playground
 const cacheMap = new Map<string, WebUIContext>();
 
@@ -53,6 +127,29 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Google OAuth: must run in service worker so launchWebAuthFlow survives popup close.
+  if (request?.type === AUTH_RUNTIME_MESSAGE.GOOGLE_SIGN_IN) {
+    void (async () => {
+      try {
+        const result = await performGoogleIdentitySignIn();
+        if (result.success) {
+          sendResponse({
+            success: true as const,
+            data: result.data ?? null,
+          });
+        } else {
+          sendResponse({ success: false as const, error: result.error });
+        }
+      } catch (e) {
+        sendResponse({
+          success: false as const,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return true;
+  }
+
   // Handle Live Guard scan request
   if (request.action === LIVE_GUARD_MESSAGES.SCAN_PAGE) {
     console.log('[ServiceWorker] Live Guard scan request received');

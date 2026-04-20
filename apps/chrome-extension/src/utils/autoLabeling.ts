@@ -11,8 +11,6 @@ import type { ChatCompletionMessageParam } from 'openai/resources/index';
 import type { AutoLabel } from './datasetDB';
 import { getActiveModelConfig } from './aiConfig';
 import { getImageDimensions } from './coordinateUtils';
-import { groundAutoLabelsViewportRelative } from './domEvidenceGrounding';
-
 const debug = getDebug('auto-labeling');
 
 // 18-category taxonomy (canonical labels)
@@ -389,6 +387,7 @@ function validateAutoLabel(
   return {
     category: validCategory,
     bbox: hasValidBbox ? [x, y, width, height] : [0, 0, 0, 0],
+    bboxSource: 'vlm' as const,
     confidence,
     model: modelName,
     description,
@@ -527,14 +526,12 @@ Rules:
  * @param screenshot - Base64 data URL of screenshot
  * @param dom - DOM HTML string
  * @param modelName - Optional model identifier (defaults to current config)
- * @param domGrounding - When set, replaces bboxes using evidence text in the live tab (viewport-relative pixels)
- * @returns Array of validated AutoLabel objects
+ * @returns Array of validated AutoLabel objects (VLM bboxes in image pixels; hybrid snap is optional downstream)
  */
 export async function autoLabelScreenshot(
   screenshot: string,
   dom?: string,
   modelName?: string,
-  domGrounding?: { tabId: number; scrollY: number },
 ): Promise<AutoLabel[]> {
   const modelConfig = await getActiveModelConfig();
   const usedModelName = modelName || modelConfig.modelName || 'unknown';
@@ -635,21 +632,9 @@ If unsure, return fewer patterns rather than guessing.`,
       }
     }
 
-    let labelsForNms = validatedLabels;
-    if (domGrounding?.tabId !== undefined) {
-      labelsForNms = await groundAutoLabelsViewportRelative(
-        domGrounding.tabId,
-        validatedLabels,
-        domGrounding.scrollY,
-        imgWidth,
-        imgHeight,
-        { expectedScrollY: domGrounding.scrollY, viewportHeight: imgHeight },
-      );
-    }
-
     // ── Post-processing: NMS + max cap ──────────────────────────────────
     // Remove overlapping bboxes (keep higher confidence), then cap at 5
-    const nmsLabels = applyNMS(labelsForNms, 0.5);
+    const nmsLabels = applyNMS(validatedLabels, 0.5);
     const cappedLabels = nmsLabels
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 5);

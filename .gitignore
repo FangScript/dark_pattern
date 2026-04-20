@@ -137,3 +137,9 @@ model/.venv_gemma/
 model/gemma-3-4b-it/
 model/*.safetensors
 model/*.bin
+model/dataset/
+model/**/*.png
+model/**/*.jpg
+model/**/*.jpeg
+model/**/*.zip
+model/finetune/

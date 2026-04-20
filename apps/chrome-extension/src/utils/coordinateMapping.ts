@@ -68,6 +68,57 @@ function normalizedToPixels(
 }
 
 /**
+ * Map a normalized axis-aligned box in 0–1000 space (x1,y1,x2,y2 corners)
+ * to screenshot pixel rectangle (top-left + size).
+ */
+export function mapNormalizedToViewport(
+  bbox: [number, number, number, number],
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } {
+  const [x1, y1, x2, y2] = bbox;
+  return {
+    x: (x1 / 1000) * width,
+    y: (y1 / 1000) * height,
+    w: ((x2 - x1) / 1000) * width,
+    h: ((y2 - y1) / 1000) * height,
+  };
+}
+
+/**
+ * Normalize a quad [x1,y1,x2,y2] in 0–1000 to [x,y,width,height] in the same scale.
+ * Ensures positive area with a small minimum size.
+ */
+export function normalizedQuadToNormXYWH(
+  quad: [number, number, number, number],
+  minSpan = 15,
+): [number, number, number, number] {
+  let x1 = Math.min(quad[0], quad[2]);
+  let x2 = Math.max(quad[0], quad[2]);
+  let y1 = Math.min(quad[1], quad[3]);
+  let y2 = Math.max(quad[1], quad[3]);
+  x1 = Math.max(0, Math.min(1000, x1));
+  x2 = Math.max(0, Math.min(1000, x2));
+  y1 = Math.max(0, Math.min(1000, y1));
+  y2 = Math.max(0, Math.min(1000, y2));
+  let w = x2 - x1;
+  let h = y2 - y1;
+  if (w < minSpan) {
+    const pad = (minSpan - w) / 2;
+    x1 = Math.max(0, x1 - pad);
+    x2 = Math.min(1000, x1 + minSpan);
+    w = x2 - x1;
+  }
+  if (h < minSpan) {
+    const pad = (minSpan - h) / 2;
+    y1 = Math.max(0, y1 - pad);
+    y2 = Math.min(1000, y1 + minSpan);
+    h = y2 - y1;
+  }
+  return [x1, y1, w, h];
+}
+
+/**
  * Get canvas to DOM coordinates with high precision
  * Accounts for Scroll Position, DPR, and Scaling
  *

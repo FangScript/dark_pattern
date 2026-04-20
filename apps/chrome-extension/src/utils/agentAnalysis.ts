@@ -15,7 +15,6 @@
 import { autoLabelScreenshot, autoLabelDOMOnly, isImageSupportError } from './autoLabeling';
 import { enrichAutoLabel, type AutoLabel } from './datasetDB';
 import { getImageDimensions } from './coordinateUtils';
-import { groundAutoLabelsViewportRelative } from './domEvidenceGrounding';
 import { getActiveModelConfig } from './aiConfig';
 import { captureTabScreenshot } from './screenshotCapture';
 import { AIActionType, callAIWithObjectResponse } from '@darkpatternhunter/core/ai-model';
@@ -216,15 +215,7 @@ async function analyzeScreenshot(
   // If we already know vision doesn't work → DOM-only
   if (_visionCapable === false) {
     try {
-      let labels = await autoLabelDOMOnly(dom, url);
-      labels = await groundAutoLabelsViewportRelative(
-        tabId,
-        labels,
-        scrollY,
-        imgW,
-        imgH,
-        { expectedScrollY: scrollY, viewportHeight: imgH },
-      );
+      const labels = await autoLabelDOMOnly(dom, url);
       console.log(`[agent] [${label}] DOM-only → ${labels.length} patterns`);
       return labels;
     } catch (err) {
@@ -235,10 +226,7 @@ async function analyzeScreenshot(
 
   // Try vision
   try {
-    const labels = await autoLabelScreenshot(screenshot, dom, undefined, {
-      tabId,
-      scrollY,
-    });
+    const labels = await autoLabelScreenshot(screenshot, dom, undefined);
     if (_visionCapable === null) setVisionCapable(true);
     console.log(`[agent] [${label}] Vision → ${labels.length} patterns`);
     return labels;
@@ -247,15 +235,7 @@ async function analyzeScreenshot(
       setVisionCapable(false);
       console.warn(`[agent] Vision not supported, switching to DOM-only`);
       try {
-        let labels = await autoLabelDOMOnly(dom, url);
-        labels = await groundAutoLabelsViewportRelative(
-          tabId,
-          labels,
-          scrollY,
-          imgW,
-          imgH,
-          { expectedScrollY: scrollY, viewportHeight: imgH },
-        );
+        const labels = await autoLabelDOMOnly(dom, url);
         console.log(`[agent] [${label}] DOM-only fallback → ${labels.length} patterns`);
         return labels;
       } catch {
