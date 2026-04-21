@@ -434,7 +434,9 @@ export async function getUserRole(): Promise<AuthResult<AppRole>> {
       .limit(1);
 
     if (error) {
-      return { success: false, error: error.message };
+      // If role-table lookup fails (commonly due to RLS permissions),
+      // keep authenticated users in the default "user" role.
+      return { success: true, data: 'user' };
     }
 
     const first = Array.isArray(data) && data.length > 0 ? data[0] : null;
@@ -443,7 +445,9 @@ export async function getUserRole(): Promise<AuthResult<AppRole>> {
       roleNameRaw === 'admin' || roleNameRaw === 'user' ? roleNameRaw : 'user';
     return { success: true, data: roleName };
   } catch (err: any) {
-    return { success: false, error: err?.message ?? String(err) };
+    // Never downgrade a signed-in user to guest because of lookup failures.
+    // Caller treats failures as guest, which hides user features.
+    return { success: true, data: 'user' };
   }
 }
 

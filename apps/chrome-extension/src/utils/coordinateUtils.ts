@@ -52,13 +52,15 @@ export function viewportToPageAbsolute(
   viewport: ViewportCaptureWithDPR,
 ): AbsoluteBbox {
   const [x, y, w, h] = bbox;
-  const scrollYDevice = viewport.scrollY * viewport.devicePixelRatio;
+  // Captures are taken with scaleFactor=1, so viewport bboxes and scroll offsets
+  // should stay in CSS-space to avoid DPR-induced drift.
+  const scrollYCss = viewport.scrollY;
   return {
     x,
-    y: y + scrollYDevice,
+    y: y + scrollYCss,
     width: w,
     height: h,
-    space: 'device',
+    space: 'css',
   };
 }
 
@@ -158,13 +160,12 @@ export function calculateFullPageDimensions(
 ): { width: number; height: number } {
   if (viewports.length === 0) return { width: 0, height: 0 };
 
-  // All viewports should have the same width (same page), use max for safety
-  const dpr = viewports[0].devicePixelRatio;
-  const width = Math.max(...viewports.map((v) => v.viewportWidth * v.devicePixelRatio));
+  // Keep stitching canvas in CSS-space for consistency with captured bbox coordinates.
+  const width = Math.max(...viewports.map((v) => v.viewportWidth));
 
-  // Height = max(scrollY + viewportHeight) across all viewports, in device pixels
+  // Height = max(scrollY + viewportHeight) across all viewports, in CSS pixels.
   const height = Math.max(
-    ...viewports.map((v) => (v.scrollY + v.viewportHeight) * v.devicePixelRatio),
+    ...viewports.map((v) => v.scrollY + v.viewportHeight),
   );
 
   return { width: Math.round(width), height: Math.round(height) };
@@ -215,8 +216,10 @@ export async function buildFullPageCanvas(
   // Draw each viewport screenshot at its scroll offset
   for (const vp of sorted) {
     const img = await loadImage(vp.screenshot);
-    const yOffset = vp.scrollY * vp.devicePixelRatio;
-    ctx.drawImage(img, 0, yOffset);
+    const yOffset = vp.scrollY;
+    // Scale each screenshot to viewport CSS size so stitched canvas and bboxes
+    // share the same coordinate space.
+    ctx.drawImage(img, 0, yOffset, vp.viewportWidth, vp.viewportHeight);
   }
 
   // Draw bounding boxes in page-absolute positions

@@ -365,7 +365,6 @@ ${entry.dom ? `\nDOM Structure (excerpt):\n${entry.dom.substring(0, 2000)}...` :
     const confidenceScore = calculateConfidenceScore(darkPatterns);
 
     // Update entry with analysis results
-    const modelConfig = await getActiveModelConfig();
     const updatedEntry: DatasetEntry = {
       ...entry,
       patterns: darkPatterns,

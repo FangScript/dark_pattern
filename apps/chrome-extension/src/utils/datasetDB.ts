@@ -52,6 +52,11 @@ export interface AutoLabel {
   location?: string;
   evidence?: string;
   viewportIndex?: number; // Which viewport this pattern was detected in
+  // Viewport anchoring metadata captured at detection time
+  viewportScrollY?: number; // Page scroll (CSS px) where this viewport was captured
+  viewportWidth?: number; // Viewport width (CSS px) where this pattern was detected
+  viewportHeight?: number; // Viewport height (CSS px) where this pattern was detected
+  viewportId?: string; // Stable capture identity (e.g., tabId_viewportIndex)
   /** dom = bbox from evidence grounding; vlm = model bbox */
   bboxSource?: 'dom' | 'vlm';
 }

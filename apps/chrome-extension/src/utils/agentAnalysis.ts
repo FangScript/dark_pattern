@@ -113,7 +113,7 @@ async function scrollTo(tabId: number, position: 'top' | 'down'): Promise<void> 
         window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
         scrollEl.scrollTop = 0;
       } else {
-        const step = window.innerHeight * 0.85;
+        const step = window.innerHeight;
         window.scrollBy({ top: step, behavior: 'instant' });
         scrollEl.scrollTop += step;
       }
@@ -154,6 +154,23 @@ async function dismissPopups(tabId: number): Promise<void> {
 // screenshots. We neutralage this by injecting CSS that forces the root element
 // to behave as a 1280px wide viewport regardless of the actual window width.
 const TARGET_VIEWPORT_WIDTH = 1280;
+const HARD_MAX_VIEWPORTS = 6;
+const BOTTOM_GAP_PX = 100;
+const MIN_REMAINING_PX = 200;
+
+function quickImageHash(dataUrl: string): string {
+  // Fast, deterministic hash on sampled chars (good enough for duplicate viewport detection).
+  const input = dataUrl || '';
+  const len = input.length;
+  if (len === 0) return '0';
+  const step = Math.max(1, Math.floor(len / 1024));
+  let h = 2166136261;
+  for (let i = 0; i < len; i += step) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}
 
 async function lockViewportWidth(tabId: number): Promise<void> {
   try {
@@ -464,19 +481,28 @@ export async function runAgentLoop(
   try {
     const meta = await getViewportMeta(tabId);
     const agentLimits = await getAgentLimits();
-    const totalScrollSteps = Math.min(
-      Math.ceil(meta.scrollHeight / (meta.h * 0.85)),
-      agentLimits.maxViewports, // Dynamic based on provider
+    const totalScrollSteps = Math.max(
+      1,
+      Math.min(agentLimits.maxViewports, HARD_MAX_VIEWPORTS),
     );
 
     console.log(`[agent] Phase 1: Scanning ${totalScrollSteps} viewports (page=${meta.scrollHeight}px, viewport=${meta.h}px)`);
 
+    let lastHash: string | null = null;
     for (let i = 0; i < totalScrollSteps; i++) {
       if (i > 0) await scrollTo(tabId, 'down');
 
       try {
         const screenshot = await capture(tabId);
         const vmeta = await getViewportMeta(tabId);
+        const hash = quickImageHash(screenshot);
+        if (lastHash && hash === lastHash) {
+          console.log(
+            `[agent] Phase 1: Duplicate viewport detected at index ${i}, stopping scan`,
+          );
+          break;
+        }
+        lastHash = hash;
         screenshotCount++;
 
         rawCaptures.push({
@@ -490,6 +516,15 @@ export async function runAgentLoop(
 
         onProgress(`Phase 1: Captured viewport ${i + 1}/${totalScrollSteps}`);
         console.log(`[agent] Phase 1: Viewport ${i} captured (scrollY=${vmeta.y})`);
+        const bottomReached =
+          vmeta.y + vmeta.h >= vmeta.scrollHeight - BOTTOM_GAP_PX;
+        const remaining = vmeta.scrollHeight - (vmeta.y + vmeta.h);
+        if (bottomReached || remaining < MIN_REMAINING_PX) {
+          console.log(
+            `[agent] Phase 1: Near bottom at viewport ${i} (remaining=${Math.max(0, Math.round(remaining))}px), stopping scan`,
+          );
+          break;
+        }
       } catch (err) {
         console.warn(`[agent] Phase 1: Failed to capture viewport ${i}:`, err);
       }
@@ -629,6 +664,10 @@ export async function runAgentLoop(
     // Stamp the viewportIndex onto each pattern before pushing
     v.patterns.forEach(p => {
       p.viewportIndex = vIdx;
+      p.viewportScrollY = v.scrollY;
+      p.viewportWidth = v.viewportWidth;
+      p.viewportHeight = v.viewportHeight;
+      p.viewportId = `${tabId}_${vIdx}`;
       allPatterns.push(p);
     });
   });

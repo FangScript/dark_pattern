@@ -17,6 +17,7 @@ import {
   Input,
   Radio,
   Select,
+  Spin,
   Space,
   Tag,
   Typography,
@@ -43,7 +44,6 @@ import {
   signInWithGoogle,
   signOut,
   signUp,
-  updatePassword,
 } from '../../lib/auth';
 
 const { Title, Text, Paragraph } = Typography;
@@ -53,6 +53,8 @@ type SettingsProps = {
 };
 
 export function Settings({ role = 'guest' }: SettingsProps) {
+  const canConfigureAi = role === 'admin' || role === 'user';
+  const MIN_LOADING_MS = 800;
   const [config, setConfig] = useState<AIConfig>({
     provider: AI_DEFAULTS.AI_PROVIDER,
     openaiApiKey: '',
@@ -73,11 +75,11 @@ export function Settings({ role = 'guest' }: SettingsProps) {
   const [authRememberMe, setAuthRememberMe] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
-  const [newPasswordDraft, setNewPasswordDraft] = useState('');
 
   // Load settings from storage on mount
   useEffect(() => {
     const loadConfig = async () => {
+      const loadingStart = Date.now();
       try {
         // Restore Supabase session (if any) and fetch current user
         await restoreSession();
@@ -97,6 +99,10 @@ export function Settings({ role = 'guest' }: SettingsProps) {
         console.error('Failed to load AI config:', error);
         message.error('Failed to load settings');
       } finally {
+        const elapsed = Date.now() - loadingStart;
+        if (elapsed < MIN_LOADING_MS) {
+          await new Promise((resolve) => setTimeout(resolve, MIN_LOADING_MS - elapsed));
+        }
         setIsLoading(false);
       }
     };
@@ -337,25 +343,15 @@ export function Settings({ role = 'guest' }: SettingsProps) {
     message.info('Facebook sign-in will be enabled next.');
   };
 
-  const handleChangePassword = async () => {
-    if (!newPasswordDraft || newPasswordDraft.length < 6) {
-      message.error('Enter a new password (at least 6 characters).');
-      return;
-    }
-    setAuthLoading(true);
-    const result = await updatePassword(newPasswordDraft);
-    if (!result.success) {
-      message.error(result.error || 'Could not update password.');
-      setAuthLoading(false);
-      return;
-    }
-    setNewPasswordDraft('');
-    message.success('Password updated.');
-    setAuthLoading(false);
-  };
-
   if (isLoading) {
-    return <div>Loading settings...</div>;
+    return (
+      <Card bordered={false} style={{ textAlign: 'center', padding: '36px 0' }}>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Spin size="large" tip="Loading your account and AI settings..." />
+          <Text type="secondary">Loading settings...</Text>
+        </Space>
+      </Card>
+    );
   }
 
   return (
@@ -386,20 +382,6 @@ export function Settings({ role = 'guest' }: SettingsProps) {
               <Text>
                 Signed in as <Text strong>{currentUserEmail}</Text>
               </Text>
-              <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-                If you just used a password-reset link, set a new password here, then you can
-                sign in normally next time.
-              </Paragraph>
-              <Input.Password
-                placeholder="New password"
-                value={newPasswordDraft}
-                onChange={(e) => setNewPasswordDraft(e.target.value)}
-                className="auth-input"
-                disabled={authLoading}
-              />
-              <Button onClick={handleChangePassword} loading={authLoading} block>
-                Update password
-              </Button>
               <Button onClick={handleAuthSignOut} loading={authLoading} danger block>
                 Log out
               </Button>
@@ -450,15 +432,15 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       </ConfigProvider>
 
       <Divider />
-      {role !== 'admin' && (
+      {!canConfigureAi && (
         <Card bordered={false}>
           <Text type="secondary">
-            Limited account: only Live Guard is available for this role.
+            Limited account: AI settings are available only for admin and user roles.
           </Text>
         </Card>
       )}
       {/* Provider Selection */}
-      {role === 'admin' && (
+      {canConfigureAi && (
       <Card
         title={
           <Space>
@@ -506,7 +488,7 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       </Card>
       )}
 
-      {role === 'admin' && <Divider />}
+      {canConfigureAi && <Divider />}
 
       {/* OpenRouter Configuration */}
       {config.provider === 'openrouter' && (
@@ -611,7 +593,7 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       {config.provider === 'openrouter' && <Divider />}
 
       {/* OpenAI Configuration */}
-      {role === 'admin' && config.provider === 'openai' && (
+      {canConfigureAi && config.provider === 'openai' && (
         <Card
           title={
             <Space>
@@ -643,7 +625,7 @@ export function Settings({ role = 'guest' }: SettingsProps) {
       )}
 
       {/* Local AI Configuration */}
-      {role === 'admin' && config.provider === 'local' && (
+      {canConfigureAi && config.provider === 'local' && (
         <Card
           title={
             <Space>

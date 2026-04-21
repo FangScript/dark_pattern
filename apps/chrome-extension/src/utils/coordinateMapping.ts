@@ -157,13 +157,19 @@ export function getCanvasToDomCoords(
     height = normalizedToPixels(height, screenshotSize.height);
   }
 
-  // Adjust for DPR if screenshot was captured at different DPR
-  // Most screenshots are captured at DPR=1, so we need to scale down if current DPR > 1
-  const scaleFactor = 1 / dpr;
-  const adjustedX = x * scaleFactor;
-  const adjustedY = y * scaleFactor;
-  const adjustedWidth = width * scaleFactor;
-  const adjustedHeight = height * scaleFactor;
+  // Convert from screenshot pixel-space to current viewport CSS-space.
+  // Prefer measured image/viewport scale over runtime DPR to avoid mismatch
+  // when captures are forced to scaleFactor=1.
+  const scaleX =
+    viewportSize.width > 0 ? screenshotSize.width / viewportSize.width : dpr || 1;
+  const scaleY =
+    viewportSize.height > 0 ? screenshotSize.height / viewportSize.height : dpr || 1;
+  const safeScaleX = Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1;
+  const safeScaleY = Number.isFinite(scaleY) && scaleY > 0 ? scaleY : 1;
+  const adjustedX = x / safeScaleX;
+  const adjustedY = y / safeScaleY;
+  const adjustedWidth = width / safeScaleX;
+  const adjustedHeight = height / safeScaleY;
 
   // Add scroll position to get absolute DOM coordinates
   const domX = adjustedX + scrollPosition.scrollX;

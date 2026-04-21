@@ -38,7 +38,22 @@ const LIVE_GUARD_MESSAGES = {
 } as const;
 
 const TARGET_VIEWPORT_WIDTH = 1280;
-const MAX_VIEWPORTS = 10;
+const MAX_VIEWPORTS = 6;
+const BOTTOM_GAP_PX = 100;
+const MIN_REMAINING_PX = 200;
+
+function quickImageHash(dataUrl: string): string {
+  const input = dataUrl || '';
+  const len = input.length;
+  if (len === 0) return '0';
+  const step = Math.max(1, Math.floor(len / 1024));
+  let h = 2166136261;
+  for (let i = 0; i < len; i += step) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}
 
 /**
  * Hybrid VLM-first: bbox from the model in normalized 0–1000 space.
@@ -84,6 +99,9 @@ interface DetectedPattern {
   scrollY?: number;                          // page scroll offset when screenshot was taken
   screenshotSize?: { width: number; height: number };
   viewportIndex?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  viewportId?: string;
 }
 
 interface LiveGuardDetectionResponse {
@@ -132,7 +150,7 @@ async function scrollTo(tabId: number, pos: 'top' | 'down'): Promise<void> {
         window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
         el.scrollTop = 0;
       } else {
-        const step = window.innerHeight * 0.85;
+        const step = window.innerHeight;
         window.scrollBy({ top: step, behavior: 'instant' as ScrollBehavior });
         el.scrollTop += step;
       }
@@ -285,11 +303,13 @@ export function LiveGuard() {
 
   // ── AI analysis for one screenshot ────────────────────────────────────────
   const analyzeViewport = async (
+    tabId: number,
     screenshot: string,
     dom: string,
     url: string,
     scrollY: number,
     screenshotSize: { width: number; height: number },
+    viewportSize: { width: number; height: number },
     label: string,
     viewportIndex: number,
   ): Promise<DetectedPattern[]> => {
@@ -376,6 +396,9 @@ EVIDENCE QUALITY RULES (MANDATORY):
           scrollY,
           screenshotSize,
           viewportIndex,
+          viewportWidth: viewportSize.width,
+          viewportHeight: viewportSize.height,
+          viewportId: `${tabId}_${viewportIndex}`,
         };
       });
     } catch (err) {
@@ -487,7 +510,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
       // ── PHASE 1 + 2: Scroll & capture + AI analyze each viewport ────────
       const meta = await getViewportMeta(tabId);
       const totalSteps = Math.min(
-        Math.ceil(meta.scrollHeight / (meta.h * 0.85)),
+        Math.ceil(meta.scrollHeight / meta.h),
         MAX_VIEWPORTS,
       );
       debug(`Phase 1: ${totalSteps} viewports (page=${meta.scrollHeight}px, vh=${meta.h}px)`);
@@ -496,9 +519,11 @@ EVIDENCE QUALITY RULES (MANDATORY):
         screenshot: string;
         scrollY: number;
         screenshotSize: { width: number; height: number };
+        viewportSize: { width: number; height: number };
         index: number;
       }
       const rawCaptures: RawCapture[] = [];
+      let lastHash: string | null = null;
 
       for (let i = 0; i < totalSteps; i++) {
         if (i > 0) await scrollTo(tabId, 'down');
@@ -506,9 +531,30 @@ EVIDENCE QUALITY RULES (MANDATORY):
         try {
           const screenshot = await captureTabScreenshot(tabId);
           const vmeta = await getViewportMeta(tabId);
+          const hash = quickImageHash(screenshot);
+          if (lastHash && hash === lastHash) {
+            debug(`Phase 1: Duplicate viewport at ${i}, stopping`);
+            break;
+          }
+          lastHash = hash;
           const screenshotSize = await getScreenshotSize(screenshot);
-          rawCaptures.push({ screenshot, scrollY: vmeta.y, screenshotSize, index: i });
+          rawCaptures.push({
+            screenshot,
+            scrollY: vmeta.y,
+            screenshotSize,
+            viewportSize: { width: vmeta.w, height: vmeta.h },
+            index: i,
+          });
           debug(`Phase 1: Viewport ${i} captured (scrollY=${vmeta.y})`);
+          const bottomReached =
+            vmeta.y + vmeta.h >= vmeta.scrollHeight - BOTTOM_GAP_PX;
+          const remaining = vmeta.scrollHeight - (vmeta.y + vmeta.h);
+          if (bottomReached || remaining < MIN_REMAINING_PX) {
+            debug(
+              `Phase 1: Near bottom at viewport ${i} (remaining=${Math.max(0, Math.round(remaining))}px), stopping`,
+            );
+            break;
+          }
         } catch (err) {
           console.warn(`[live-guard] Phase 1: Viewport ${i} capture failed:`, err);
         }
@@ -520,11 +566,13 @@ EVIDENCE QUALITY RULES (MANDATORY):
         await scrollToY(tabId, cap.scrollY);
         const dom = await getDOMText(tabId);
         const patterns = await analyzeViewport(
+          tabId,
           cap.screenshot,
           dom,
           url,
           cap.scrollY,
           cap.screenshotSize,
+          cap.viewportSize,
           `scan-${cap.index}`,
           cap.index,
         );
@@ -558,11 +606,13 @@ EVIDENCE QUALITY RULES (MANDATORY):
           const screenshotSize = await getScreenshotSize(screenshot);
           const dom = await getDOMText(tabId);
           const patterns = await analyzeViewport(
+            tabId,
             screenshot,
             dom,
             url,
             vmeta.y,
             screenshotSize,
+            { width: vmeta.w, height: vmeta.h },
             `interact-${el.type}`,
             interactViewportSeq,
           );

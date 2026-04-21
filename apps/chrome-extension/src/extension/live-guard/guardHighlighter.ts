@@ -42,6 +42,9 @@ interface DetectedPattern {
   screenshotSize?: ScreenshotSize;           // dimensions of the viewport screenshot
   /** Capture index for multi-viewport scans (optional) */
   viewportIndex?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  viewportId?: string;
 }
 
 // Extended pattern interface with screenshot metadata
@@ -480,32 +483,40 @@ function createHighlightOverlay(
     border-color: ${colors.border};
   `;
 
-  // ── Map AI bbox → document-space CSS px ──────────────────────────────────
-  const viewportSize = getViewportSize();
-  const dpr = getDevicePixelRatio();
-  // Pass scrollY=0 so mapping is viewport-relative; combine with live scroll for doc X.
-  const zeroScroll: ScrollPosition = { scrollX: 0, scrollY: 0 };
-
-  const result = getCanvasToDomCoords(
-    bbox,
-    effectiveScreenshotSize,
-    viewportSize,
-    zeroScroll,
-    dpr,
-    pattern.isNormalized !== false,
-  );
-
+  // ── Map AI bbox → document-space CSS px (single-scroll anchoring) ─────────
   const sx = window.scrollX || 0;
   const sy = window.scrollY || 0;
-  const aiWidth = result.domWidth;
-  const aiHeight = result.domHeight;
-  const docAiLeft = sx + result.domX;
-  const docAiTop = captureScrollY + result.domY;
+  const captureViewportWidth =
+    pattern.viewportWidth ||
+    (effectiveScreenshotSize?.width ?? getViewportSize().width);
+  const captureViewportHeight =
+    pattern.viewportHeight ||
+    (effectiveScreenshotSize?.height ?? getViewportSize().height);
 
-  const { element: hitElement, elementRect: hitRect } = elementFromPointForCaptureCenter(
-    result,
-    captureScrollY,
-  );
+  let localX = bbox.x;
+  let localY = bbox.y;
+  let localW = bbox.width;
+  let localH = bbox.height;
+  if (pattern.isNormalized !== false) {
+    localX = (bbox.x / 1000) * captureViewportWidth;
+    localY = (bbox.y / 1000) * captureViewportHeight;
+    localW = (bbox.width / 1000) * captureViewportWidth;
+    localH = (bbox.height / 1000) * captureViewportHeight;
+  }
+
+  const aiWidth = localW;
+  const aiHeight = localH;
+  const docAiLeft = sx + localX;
+  const docAiTop = captureScrollY + localY; // add capture scroll exactly once
+
+  const result = {
+    domX: localX,
+    domY: localY,
+    domWidth: localW,
+    domHeight: localH,
+  };
+
+  const { element: hitElement, elementRect: hitRect } = elementFromPointForCaptureCenter(result, captureScrollY);
 
   // ── Case 1: Smart snap-to-element (hit-test uses capture scroll, not stale scroll=0) ──
   if (hitElement && hitRect) {
@@ -618,7 +629,25 @@ function showHighlights(
   shadowHost.style.height = `${docHeight}px`;
   debug('Shadow host height set to', docHeight);
 
-  patterns.forEach((pattern, index) => {
+  const currentScroll = window.scrollY || 0;
+  const currentViewportBottom = currentScroll + (window.innerHeight || 0);
+  const visiblePatterns = patterns
+    .map((pattern, index) => ({ pattern, index }))
+    .filter(({ pattern }) => {
+      if (pattern.scrollY === undefined || pattern.scrollY === null) {
+        return true;
+      }
+      const capTop = pattern.scrollY;
+      const capHeight =
+        pattern.viewportHeight ??
+        pattern.screenshotSize?.height ??
+        currentViewportBottom - currentScroll;
+      const capBottom = capTop + capHeight;
+      // Only render patterns belonging to the currently visible capture region.
+      return capBottom > currentScroll && capTop < currentViewportBottom;
+    });
+
+  visiblePatterns.forEach(({ pattern, index }) => {
     // Each pattern carries its own screenshotSize + scrollY from the viewport it was captured in.
     // Fall back to the shared currentScreenshotSize if not present.
     const patternWithMetadata: PatternWithMetadata = {
@@ -635,7 +664,9 @@ function showHighlights(
   attachHighlightScrollResizeSync();
   syncAllHighlightClientPositions();
 
-  debug(`Added ${patterns.length} highlights across multiple viewports`);
+  debug(
+    `Added ${visiblePatterns.length}/${patterns.length} highlights for current viewport region`,
+  );
 }
 
 /**
