@@ -13,16 +13,10 @@ import {
 import { getDebug } from '@darkpatternhunter/shared/logger';
 import { Button, Card, Space, Spin, Tag, Typography, message } from 'antd';
 import type { ChatCompletionMessageParam } from 'openai/resources/index';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useGlobalAIConfig } from '../../hooks/useGlobalAIConfig';
-import {
-  type AIConfig,
-  getAIConfig,
-  getActiveModelConfig,
-  isLocalServerReachable,
-} from '../../utils/aiConfig';
+import { getActiveModelConfig } from '../../utils/aiConfig';
 import { getDarkPatternPrompt } from '../../utils/analysisEngine';
-import { normalizedQuadToNormXYWH } from '../../utils/coordinateMapping';
 import { captureTabScreenshot } from '../../utils/screenshotCapture';
 
 const { Title, Text, Paragraph } = Typography;
@@ -35,52 +29,53 @@ const LIVE_GUARD_MESSAGES = {
   CLEAR_HIGHLIGHTS: 'live-guard-clear-highlights',
   SHOW_HIGHLIGHTS: 'live-guard-show-highlights',
   FOCUS_PATTERN: 'live-guard-focus-pattern',
+  UNFOCUS_PATTERN: 'live-guard-unfocus-pattern',
 } as const;
 
 const TARGET_VIEWPORT_WIDTH = 1280;
-const MAX_VIEWPORTS = 6;
+const MAX_VIEWPORTS = 5;
+const SCROLL_STEP = 0.9;
 const BOTTOM_GAP_PX = 100;
 const MIN_REMAINING_PX = 200;
 
-function quickImageHash(dataUrl: string): string {
-  const input = dataUrl || '';
-  const len = input.length;
-  if (len === 0) return '0';
-  const step = Math.max(1, Math.floor(len / 1024));
-  let h = 2166136261;
-  for (let i = 0; i < len; i += step) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(16);
-}
-
 /**
- * Hybrid VLM-first: bbox from the model in normalized 0–1000 space.
- * Prefer [x1, y1, x2, y2] corners; accept legacy [x, y, width, height] normalized.
+ * VLM-first bbox coercion in normalized 0–1000 space.
+ * Input expected as [x1, y1, x2, y2], output as [x, y, width, height].
  */
 function coerceLiveGuardBbox(
   raw: [number, number, number, number] | undefined,
-): [number, number, number, number] {
-  if (!raw || raw.length !== 4) {
-    return [400, 400, 120, 120];
+): [number, number, number, number] | null {
+  if (!Array.isArray(raw) || raw.length !== 4) return null;
+
+  let [x1, y1, x2, y2] = raw.map(Number);
+  if (
+    !Number.isFinite(x1) ||
+    !Number.isFinite(y1) ||
+    !Number.isFinite(x2) ||
+    !Number.isFinite(y2)
+  ) {
+    return null;
   }
-  const [a, b, c, d] = raw;
-  const quadLike = c > a && d > b;
-  const xywhLike =
-    c > 0 &&
-    d > 0 &&
-    a >= 0 &&
-    b >= 0 &&
-    a + c <= 1000.5 &&
-    b + d <= 1000.5;
-  if (quadLike) {
-    return normalizedQuadToNormXYWH([a, b, c, d]);
-  }
-  if (xywhLike) {
-    return normalizedQuadToNormXYWH([a, b, a + c, b + d]);
-  }
-  return normalizedQuadToNormXYWH([a, b, c, d]);
+
+  // Fix inverted coordinates
+  if (x2 < x1) [x1, x2] = [x2, x1];
+  if (y2 < y1) [y1, y2] = [y2, y1];
+
+  // Clamp to normalized space
+  x1 = Math.max(0, Math.min(1000, x1));
+  y1 = Math.max(0, Math.min(1000, y1));
+  x2 = Math.max(0, Math.min(1000, x2));
+  y2 = Math.max(0, Math.min(1000, y2));
+
+  const width = x2 - x1;
+  const height = y2 - y1;
+
+  // Reject tiny/garbage boxes
+  if (width < 10 || height < 10) return null;
+  // Reject giant full-screen-ish boxes
+  if (width > 900 || height > 900) return null;
+
+  return [x1, y1, width, height];
 }
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -150,7 +145,7 @@ async function scrollTo(tabId: number, pos: 'top' | 'down'): Promise<void> {
         window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
         el.scrollTop = 0;
       } else {
-        const step = window.innerHeight;
+        const step = Math.max(1, Math.floor(window.innerHeight * SCROLL_STEP));
         window.scrollBy({ top: step, behavior: 'instant' as ScrollBehavior });
         el.scrollTop += step;
       }
@@ -279,18 +274,6 @@ async function clickInteractiveElement(tabId: number, el: InteractiveElement): P
   }
 }
 
-async function getDOMText(tabId: number): Promise<string> {
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => document.documentElement.outerHTML.substring(0, 8000),
-    });
-    return results[0]?.result ?? '';
-  } catch {
-    return '';
-  }
-}
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function LiveGuard() {
@@ -305,7 +288,6 @@ export function LiveGuard() {
   const analyzeViewport = async (
     tabId: number,
     screenshot: string,
-    dom: string,
     url: string,
     scrollY: number,
     screenshotSize: { width: number; height: number },
@@ -362,8 +344,17 @@ IMPORTANT: Return STRICT JSON with this exact structure:
 }
 
 Bounding box (REQUIRED for every pattern):
-- "bbox" MUST be [x1, y1, x2, y2] in normalized 0–1000 coordinates relative to THIS screenshot only (corners of the tight UI region).
-- x1 < x2, y1 < y2, all values in [0, 1000]. Do NOT return an empty or degenerate box; if uncertain, estimate the best tight box anyway.
+- Return bounding boxes that are:
+  - TIGHT: Only cover the deceptive UI element, not surrounding containers
+  - PRECISE: Avoid extra whitespace or padding
+  - SPECIFIC: Focus on the clickable or visible deceptive component (button, label, timer, text)
+- "bbox" MUST be [x1, y1, x2, y2] normalized to [0,1000] for THIS screenshot only.
+- Rules:
+  - x2 > x1 and y2 > y1
+  - Minimum size: at least 20 units in width and height
+  - Do NOT return full-width or full-screen boxes
+  - Do NOT include entire sections or containers
+  - If unsure, return the smallest reasonable region
 
 EVIDENCE QUALITY RULES (MANDATORY):
 - Avoid generic evidence like "Add to Cart" by itself.
@@ -388,6 +379,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
       // Tag each pattern with scroll + viewport metadata (VLM-first, no DOM grounding)
       return response.content.patterns.map((p) => {
         const bbox = coerceLiveGuardBbox(p.bbox as [number, number, number, number] | undefined);
+        if (!bbox) return null;
         return {
           ...p,
           bbox,
@@ -400,7 +392,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
           viewportHeight: viewportSize.height,
           viewportId: `${tabId}_${viewportIndex}`,
         };
-      });
+      }).filter(Boolean) as DetectedPattern[];
     } catch (err) {
       debug(`[${label}] AI analysis failed:`, err);
       return [];
@@ -433,14 +425,43 @@ EVIDENCE QUALITY RULES (MANDATORY):
   };
 
   // ── Deduplication ─────────────────────────────────────────────────────────
+  const bboxOverlap = (
+    a: [number, number, number, number],
+    b: [number, number, number, number],
+  ): number => {
+    const [ax, ay, aw, ah] = a;
+    const [bx, by, bw, bh] = b;
+    const ax2 = ax + aw;
+    const ay2 = ay + ah;
+    const bx2 = bx + bw;
+    const by2 = by + bh;
+    const ix1 = Math.max(ax, bx);
+    const iy1 = Math.max(ay, by);
+    const ix2 = Math.min(ax2, bx2);
+    const iy2 = Math.min(ay2, by2);
+    const iw = Math.max(0, ix2 - ix1);
+    const ih = Math.max(0, iy2 - iy1);
+    const inter = iw * ih;
+    if (inter <= 0) return 0;
+    const ua = aw * ah + bw * bh - inter;
+    return ua > 0 ? inter / ua : 0;
+  };
+
+  const isDuplicate = (a: DetectedPattern, b: DetectedPattern): boolean => {
+    if (a.type !== b.type) return false;
+    if (!a.bbox || !b.bbox) return false;
+    const aY = a.scrollY ?? 0;
+    const bY = b.scrollY ?? 0;
+    return Math.abs(aY - bY) < 200 && bboxOverlap(a.bbox, b.bbox) > 0.6;
+  };
+
   const deduplicatePatterns = (patterns: DetectedPattern[]): DetectedPattern[] => {
-    const seen = new Set<string>();
-    return patterns.filter(p => {
-      const key = `${p.type}::${(p.description ?? p.evidence ?? '').substring(0, 80)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    const deduped: DetectedPattern[] = [];
+    for (const p of patterns) {
+      const exists = deduped.some((d) => isDuplicate(d, p));
+      if (!exists) deduped.push(p);
+    }
+    return deduped;
   };
 
   const keepPatternsForViewport = (
@@ -523,7 +544,21 @@ EVIDENCE QUALITY RULES (MANDATORY):
         index: number;
       }
       const rawCaptures: RawCapture[] = [];
-      let lastHash: string | null = null;
+      let lastScreenshot: string | null = null;
+
+      const screenshotSimilarity = (a: string, b: string): number => {
+        if (!a || !b) return 0;
+        const len = Math.min(a.length, b.length);
+        if (len === 0) return 0;
+        const step = Math.max(1, Math.floor(len / 1024));
+        let matches = 0;
+        let total = 0;
+        for (let i = 0; i < len; i += step) {
+          total += 1;
+          if (a.charCodeAt(i) === b.charCodeAt(i)) matches += 1;
+        }
+        return total > 0 ? matches / total : 0;
+      };
 
       for (let i = 0; i < totalSteps; i++) {
         if (i > 0) await scrollTo(tabId, 'down');
@@ -531,12 +566,11 @@ EVIDENCE QUALITY RULES (MANDATORY):
         try {
           const screenshot = await captureTabScreenshot(tabId);
           const vmeta = await getViewportMeta(tabId);
-          const hash = quickImageHash(screenshot);
-          if (lastHash && hash === lastHash) {
-            debug(`Phase 1: Duplicate viewport at ${i}, stopping`);
+          if (lastScreenshot && screenshotSimilarity(lastScreenshot, screenshot) > 0.98) {
+            debug(`Phase 1: Near-identical viewport at ${i}, stopping`);
             break;
           }
-          lastHash = hash;
+          lastScreenshot = screenshot;
           const screenshotSize = await getScreenshotSize(screenshot);
           rawCaptures.push({
             screenshot,
@@ -564,11 +598,9 @@ EVIDENCE QUALITY RULES (MANDATORY):
       for (const cap of rawCaptures) {
         setScanProgress(`Phase 2: Analyzing viewport ${cap.index + 1}/${rawCaptures.length}…`);
         await scrollToY(tabId, cap.scrollY);
-        const dom = await getDOMText(tabId);
         const patterns = await analyzeViewport(
           tabId,
           cap.screenshot,
-          dom,
           url,
           cap.scrollY,
           cap.screenshotSize,
@@ -604,11 +636,9 @@ EVIDENCE QUALITY RULES (MANDATORY):
           const screenshot = await captureTabScreenshot(tabId);
           const vmeta = await getViewportMeta(tabId);
           const screenshotSize = await getScreenshotSize(screenshot);
-          const dom = await getDOMText(tabId);
           const patterns = await analyzeViewport(
             tabId,
             screenshot,
-            dom,
             url,
             vmeta.y,
             screenshotSize,
@@ -680,6 +710,19 @@ EVIDENCE QUALITY RULES (MANDATORY):
       }
     } catch (err) {
       debug('Failed to focus pattern:', err);
+    }
+  };
+
+  const unfocusPattern = async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, {
+          action: LIVE_GUARD_MESSAGES.UNFOCUS_PATTERN,
+        });
+      }
+    } catch (err) {
+      debug('Failed to unfocus pattern:', err);
     }
   };
 
@@ -768,6 +811,7 @@ EVIDENCE QUALITY RULES (MANDATORY):
                       transition: 'all 0.2s ease',
                     }}
                     onMouseEnter={() => focusPattern(index)}
+                    onMouseLeave={unfocusPattern}
                   >
                     <Text strong>{pattern.type}</Text>
                     <br />

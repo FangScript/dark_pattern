@@ -7,11 +7,6 @@ import { getDebug } from '@darkpatternhunter/shared/logger';
 import {
   type BBox,
   type ScreenshotSize,
-  type ScrollPosition,
-  type ViewportSize,
-  getCanvasToDomCoords,
-  getDevicePixelRatio,
-  getScrollPosition,
   getViewportSize,
   isValidBbox,
 } from '../../utils/coordinateMapping';
@@ -24,6 +19,7 @@ const LIVE_GUARD_MESSAGES = {
   CLEAR_HIGHLIGHTS: 'live-guard-clear-highlights',
   SHOW_HIGHLIGHTS: 'live-guard-show-highlights',
   FOCUS_PATTERN: 'live-guard-focus-pattern',
+  UNFOCUS_PATTERN: 'live-guard-unfocus-pattern',
 } as const;
 
 // Dark pattern detection result interface
@@ -58,6 +54,11 @@ let currentHighlights: HTMLElement[] = [];
 let shadowHost: HTMLElement | null = null;
 let shadowRoot: ShadowRoot | null = null;
 let currentScreenshotSize: ScreenshotSize | null = null;
+let focusedPatternIndex: number | null = null;
+let focusMaskTop: HTMLElement | null = null;
+let focusMaskLeft: HTMLElement | null = null;
+let focusMaskRight: HTMLElement | null = null;
+let focusMaskBottom: HTMLElement | null = null;
 
 /** Cleanup scroll/resize listeners that keep highlights aligned with the page */
 let highlightScrollResizeCleanup: (() => void) | null = null;
@@ -94,6 +95,13 @@ function syncOneHighlightClientPosition(el: HTMLElement): void {
 
 function syncAllHighlightClientPositions(): void {
   currentHighlights.forEach(syncOneHighlightClientPosition);
+  if (
+    focusedPatternIndex !== null &&
+    currentHighlights[focusedPatternIndex]
+  ) {
+    const rect = currentHighlights[focusedPatternIndex].getBoundingClientRect();
+    showFocusMask(rect);
+  }
 }
 
 function attachHighlightScrollResizeSync(): void {
@@ -120,6 +128,51 @@ function bindHighlightToDocumentRect(
   el.dataset.docWidth = String(width);
   el.dataset.docHeight = String(height);
   syncOneHighlightClientPosition(el);
+}
+
+function setMaskRect(
+  el: HTMLElement | null,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): void {
+  if (!el) return;
+  const safeWidth = Math.max(0, Math.round(width));
+  const safeHeight = Math.max(0, Math.round(height));
+  if (safeWidth <= 0 || safeHeight <= 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+  el.style.width = `${safeWidth}px`;
+  el.style.height = `${safeHeight}px`;
+}
+
+function hideFocusMask(): void {
+  [focusMaskTop, focusMaskLeft, focusMaskRight, focusMaskBottom].forEach(
+    (el) => {
+      if (el) el.style.display = 'none';
+    },
+  );
+}
+
+function showFocusMask(targetRect: DOMRect): void {
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  const left = Math.max(0, Math.min(vw, targetRect.left));
+  const top = Math.max(0, Math.min(vh, targetRect.top));
+  const right = Math.max(0, Math.min(vw, targetRect.right));
+  const bottom = Math.max(0, Math.min(vh, targetRect.bottom));
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+
+  setMaskRect(focusMaskTop, 0, 0, vw, top);
+  setMaskRect(focusMaskLeft, 0, top, left, height);
+  setMaskRect(focusMaskRight, right, top, vw - right, height);
+  setMaskRect(focusMaskBottom, 0, bottom, vw, vh - bottom);
 }
 
 /**
@@ -161,11 +214,11 @@ function initShadowDOM(): void {
   shadowHost = document.createElement('div');
   shadowHost.id = 'live-guard-shadow-host';
   shadowHost.style.cssText = `
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     pointer-events: none;
     z-index: 999999;
   `;
@@ -232,6 +285,16 @@ function initShadowDOM(): void {
       font-size: 14px;
       animation: liveGuardFadeIn 0.3s ease;
       pointer-events: auto;
+    }
+
+    .live-guard-focus-mask {
+      position: fixed;
+      pointer-events: none;
+      z-index: 999998;
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      background: rgba(0, 0, 0, 0.15);
+      display: none;
     }
 
     @keyframes liveGuardFadeIn {
@@ -308,6 +371,20 @@ function initShadowDOM(): void {
   `;
   shadowRoot.appendChild(style);
 
+  focusMaskTop = document.createElement('div');
+  focusMaskTop.className = 'live-guard-focus-mask';
+  focusMaskLeft = document.createElement('div');
+  focusMaskLeft.className = 'live-guard-focus-mask';
+  focusMaskRight = document.createElement('div');
+  focusMaskRight.className = 'live-guard-focus-mask';
+  focusMaskBottom = document.createElement('div');
+  focusMaskBottom.className = 'live-guard-focus-mask';
+
+  shadowRoot.appendChild(focusMaskTop);
+  shadowRoot.appendChild(focusMaskLeft);
+  shadowRoot.appendChild(focusMaskRight);
+  shadowRoot.appendChild(focusMaskBottom);
+
   // Append host to document body
   document.body.appendChild(shadowHost);
 
@@ -319,6 +396,8 @@ function initShadowDOM(): void {
  */
 function clearHighlights(): void {
   detachHighlightScrollResizeSync();
+  focusedPatternIndex = null;
+  hideFocusMask();
   currentHighlights.forEach((highlight) => {
     highlight.remove();
   });
@@ -352,8 +431,8 @@ function getSeverityColor(severity: string): { bg: string; border: string; badge
  * If the DOM element is more than MAX_SNAP_RATIO times larger in area than
  * the AI bbox, the element is too big (e.g. a container or body) — use AI coords.
  */
-/** Hybrid: allow light element snap only when DOM element is not much larger than VLM box */
-const MAX_SNAP_RATIO = 1.5;
+/** Light snap guard: only snap if target element area is close enough */
+const MAX_SNAP_RATIO = 2.0;
 
 function shouldUseAICoords(
   aiWidth: number, aiHeight: number,
@@ -484,8 +563,6 @@ function createHighlightOverlay(
   `;
 
   // ── Map AI bbox → document-space CSS px (single-scroll anchoring) ─────────
-  const sx = window.scrollX || 0;
-  const sy = window.scrollY || 0;
   const captureViewportWidth =
     pattern.viewportWidth ||
     (effectiveScreenshotSize?.width ?? getViewportSize().width);
@@ -506,33 +583,30 @@ function createHighlightOverlay(
 
   const aiWidth = localW;
   const aiHeight = localH;
-  const docAiLeft = sx + localX;
+  let docAiLeft = localX;
   const docAiTop = captureScrollY + localY; // add capture scroll exactly once
 
-  const result = {
-    domX: localX,
-    domY: localY,
-    domWidth: localW,
-    domHeight: localH,
-  };
-
-  const { element: hitElement, elementRect: hitRect } = elementFromPointForCaptureCenter(result, captureScrollY);
+  const centerX = localX + aiWidth / 2;
+  const centerY = localY + aiHeight / 2;
+  const hitElement = document.elementFromPoint(centerX, centerY);
+  const hitRect = hitElement?.getBoundingClientRect() || null;
 
   // ── Case 1: Smart snap-to-element (hit-test uses capture scroll, not stale scroll=0) ──
   if (hitElement && hitRect) {
-    const el = hitElement;
     const rect = hitRect;
-    const elemDocLeft = rect.left + sx;
-    const elemDocTop = rect.top + sy;
+    const elemDocLeft = rect.left + (window.scrollX || 0);
+    const elemDocTop = rect.top + (window.scrollY || 0);
     const elemWidth = rect.width;
     const elemHeight = rect.height;
 
-    if (shouldUseAICoords(aiWidth, aiHeight, elemWidth, elemHeight)) {
-      bindHighlightToDocumentRect(overlay, docAiLeft, docAiTop, aiWidth, aiHeight);
-      debug('Element too large, using AI coords:', { elem: el.tagName, elemWidth, elemHeight, aiWidth, aiHeight });
-    } else {
+    const elArea = elemWidth * elemHeight;
+    const boxArea = aiWidth * aiHeight;
+    if (boxArea > 0 && elArea < boxArea * MAX_SNAP_RATIO) {
       bindHighlightToDocumentRect(overlay, elemDocLeft, elemDocTop, elemWidth, elemHeight);
-      debug('Snapped to element:', { elem: el.tagName, elemWidth, elemHeight });
+      debug('Snapped to element:', { elem: hitElement.tagName, elemWidth, elemHeight });
+    } else {
+      bindHighlightToDocumentRect(overlay, docAiLeft, docAiTop, aiWidth, aiHeight);
+      debug('Element too large, using AI coords:', { elemWidth, elemHeight, aiWidth, aiHeight });
     }
   } else {
     // ── Case 2: No element found — use AI coords ────────────────────────────
@@ -620,34 +694,16 @@ function showHighlights(
     return;
   }
 
-  // Stretch the host to the full document height so absolute-positioned
-  // overlays at any page-Y coordinate are visible and scroll with the page.
-  const docHeight = Math.max(
-    document.body.scrollHeight,
-    document.documentElement.scrollHeight,
-  );
-  shadowHost.style.height = `${docHeight}px`;
-  debug('Shadow host height set to', docHeight);
+  // Keep host pinned to viewport; each highlight is remapped from
+  // document-space to client-space on scroll/resize.
+  shadowHost.style.height = '100vh';
+  debug('Shadow host fixed to viewport for stable bbox alignment');
 
-  const currentScroll = window.scrollY || 0;
-  const currentViewportBottom = currentScroll + (window.innerHeight || 0);
-  const visiblePatterns = patterns
-    .map((pattern, index) => ({ pattern, index }))
-    .filter(({ pattern }) => {
-      if (pattern.scrollY === undefined || pattern.scrollY === null) {
-        return true;
-      }
-      const capTop = pattern.scrollY;
-      const capHeight =
-        pattern.viewportHeight ??
-        pattern.screenshotSize?.height ??
-        currentViewportBottom - currentScroll;
-      const capBottom = capTop + capHeight;
-      // Only render patterns belonging to the currently visible capture region.
-      return capBottom > currentScroll && capTop < currentViewportBottom;
-    });
+  // Render all patterns so highlights for other captured viewports
+  // become visible automatically as the user scrolls the page.
+  const allPatterns = patterns.map((pattern, index) => ({ pattern, index }));
 
-  visiblePatterns.forEach(({ pattern, index }) => {
+  allPatterns.forEach(({ pattern, index }) => {
     // Each pattern carries its own screenshotSize + scrollY from the viewport it was captured in.
     // Fall back to the shared currentScreenshotSize if not present.
     const patternWithMetadata: PatternWithMetadata = {
@@ -657,6 +713,7 @@ function showHighlights(
       isNormalized: pattern.bboxSource === 'dom' ? false : isNormalized,
     };
     const highlight = createHighlightOverlay(patternWithMetadata, index);
+    highlight.style.display = 'none';
     shadowRoot!.appendChild(highlight);
     currentHighlights.push(highlight);
   });
@@ -665,7 +722,7 @@ function showHighlights(
   syncAllHighlightClientPositions();
 
   debug(
-    `Added ${visiblePatterns.length}/${patterns.length} highlights for current viewport region`,
+    `Added ${allPatterns.length}/${patterns.length} highlights across all captured viewports`,
   );
 }
 
@@ -681,6 +738,11 @@ function focusPattern(patternIndex: number): void {
   }
 
   const highlight = currentHighlights[patternIndex];
+  focusedPatternIndex = patternIndex;
+
+  currentHighlights.forEach((h, idx) => {
+    h.style.display = idx === patternIndex ? 'block' : 'none';
+  });
 
   // Change highlight color to bright yellow for focus
   highlight.style.backgroundColor = 'rgba(255, 235, 59, 0.5)';
@@ -693,12 +755,16 @@ function focusPattern(patternIndex: number): void {
 
   debug('Focusing on pattern:', { patternIndex, patternType, severity });
 
-  // Scroll the highlight into view
-  highlight.scrollIntoView({
-    behavior: 'smooth',
-    block: 'center',
-    inline: 'center',
-  });
+  // Scroll the page so the pattern is centered in the viewport
+  const docTop = Number(highlight.dataset.docTop);
+  const docHeight = Number(highlight.dataset.docHeight) || 0;
+  if (Number.isFinite(docTop)) {
+    const targetScrollY = Math.max(0, docTop + docHeight / 2 - window.innerHeight / 2);
+    window.scrollTo({ top: targetScrollY, behavior: 'smooth' });
+  }
+
+  // Sync positions and show blur mask; scroll listener handles continuous updates
+  syncAllHighlightClientPositions();
 
   // Reset other highlights to their original colors
   currentHighlights.forEach((h, idx) => {
@@ -710,6 +776,15 @@ function focusPattern(patternIndex: number): void {
       h.style.boxShadow = `0 0 10px ${colors.bg}`;
     }
   });
+}
+
+function unfocusPattern(): void {
+  focusedPatternIndex = null;
+  hideFocusMask();
+  currentHighlights.forEach((h) => {
+    h.style.display = 'none';
+  });
+  resetHighlightColors();
 }
 
 /**
@@ -748,6 +823,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case LIVE_GUARD_MESSAGES.FOCUS_PATTERN:
       focusPattern(message.patternIndex);
+      sendResponse({ success: true });
+      break;
+
+    case LIVE_GUARD_MESSAGES.UNFOCUS_PATTERN:
+      unfocusPattern();
       sendResponse({ success: true });
       break;
 
