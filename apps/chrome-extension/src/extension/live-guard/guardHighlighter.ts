@@ -18,6 +18,7 @@ const LIVE_GUARD_MESSAGES = {
   SCAN_PAGE: 'live-guard-scan-page',
   CLEAR_HIGHLIGHTS: 'live-guard-clear-highlights',
   SHOW_HIGHLIGHTS: 'live-guard-show-highlights',
+  APPEND_HIGHLIGHTS: 'live-guard-append-highlights',
   FOCUS_PATTERN: 'live-guard-focus-pattern',
   UNFOCUS_PATTERN: 'live-guard-unfocus-pattern',
 } as const;
@@ -801,6 +802,46 @@ function resetHighlightColors(): void {
 }
 
 /**
+ * Append highlights for new patterns WITHOUT clearing existing ones.
+ * Used for incremental exploration (Phase 3) where new patterns are
+ * discovered via interactions and added on top of the global scan.
+ */
+function appendHighlights(
+  patterns: DetectedPattern[],
+  screenshotSize?: ScreenshotSize,
+  isNormalized = true,
+): void {
+  if (screenshotSize) {
+    currentScreenshotSize = screenshotSize;
+  }
+
+  initShadowDOM();
+
+  if (!shadowRoot || !shadowHost) {
+    debug('Shadow root not available for append');
+    return;
+  }
+
+  const startIndex = currentHighlights.length;
+
+  patterns.forEach((pattern, i) => {
+    const index = startIndex + i;
+    const patternWithMetadata: PatternWithMetadata = {
+      ...pattern,
+      screenshotSize: pattern.screenshotSize ?? currentScreenshotSize ?? undefined,
+      isNormalized: pattern.bboxSource === 'dom' ? false : isNormalized,
+    };
+    const highlight = createHighlightOverlay(patternWithMetadata, index);
+    highlight.style.display = 'none';
+    shadowRoot!.appendChild(highlight);
+    currentHighlights.push(highlight);
+  });
+
+  syncAllHighlightClientPositions();
+  debug(`Appended ${patterns.length} highlights (total: ${currentHighlights.length})`);
+}
+
+/**
  * Listen for messages from sidebar
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -814,6 +855,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case LIVE_GUARD_MESSAGES.SHOW_HIGHLIGHTS:
       showHighlights(
+        message.patterns,
+        message.screenshotSize,
+        message.isNormalized,
+      );
+      sendResponse({ success: true });
+      break;
+
+    case LIVE_GUARD_MESSAGES.APPEND_HIGHLIGHTS:
+      appendHighlights(
         message.patterns,
         message.screenshotSize,
         message.isNormalized,
@@ -856,4 +906,4 @@ if (document.readyState === 'loading') {
 }
 
 // Export for testing
-export { clearHighlights, showHighlights, createHighlightOverlay };
+export { clearHighlights, showHighlights, appendHighlights, createHighlightOverlay };
